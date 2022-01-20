@@ -1,40 +1,25 @@
 using Facepunch;
+using Oxide.Core.Libraries;
 using ProtoBuf;
 using System.Collections.Generic;
 using UnityEngine;
+using Time = UnityEngine.Time;
+
 namespace Oxide.Plugins
 {
     [Info("OpenNexus", "bmgjet", "1.0.0")]
     [Description("Nexus system created by bmgjet")]
     public class OpenNexus : RustPlugin
     {
-        public static string ServerIP = "";
-        public static string ServerPort = "";
-
-        private void OnWorldPrefabSpawned(GameObject gameObject, string str)
-        {
-            //Remove Uncoded NexusFerry
-            BaseEntity component = gameObject.GetComponent<BaseEntity>();
-            if (component != null)
-            {
-                if (component.prefabID == 2508295857 && component.OwnerID == 0)
-                {
-                    //Kill it
-                    Puts("Killed uncoded ferry");
-                    component.Kill();
-                }
-            }
-        }
-
-        private void Unload()
-        {
-            ServerIP = null;
-            ServerPort = null;
-            foreach (var basenetworkable in BaseNetworkable.serverEntities) { if (basenetworkable.gameObject.name == "NexusFerry" && !basenetworkable.IsDestroyed) { basenetworkable.Kill(); } }
-        }
+        public static OpenNexus plugin;
+        public string ServerIP = "";
+        public string ServerPort = "";
+        public string OpenNexusHub = "";
+        public string OpenNexusKey = "";
 
         private void OnServerInitialized()
         {
+            plugin = this;
             //Create variables
             Quaternion rotation = Quaternion.Euler(Vector3.zero);
             Vector3 position = Vector3.zero;
@@ -42,7 +27,7 @@ namespace Oxide.Plugins
             foreach (PrefabData prefabdata in World.Serialization.world.prefabs)
             {
                 //Only target Nexus Ferry
-                if (prefabdata.id == 2508295857 )
+                if (prefabdata.id == 2508295857)
                 {
                     rotation = Quaternion.Euler(new Vector3(prefabdata.rotation.x, prefabdata.rotation.y, prefabdata.rotation.z));
                     position = new Vector3(prefabdata.position.x, prefabdata.position.y, prefabdata.position.z);
@@ -59,11 +44,41 @@ namespace Oxide.Plugins
                 }
             }
         }
+
+        private void OnWorldPrefabSpawned(GameObject gameObject, string str)
+        {
+            //Remove Uncoded NexusFerry
+            BaseEntity component = gameObject.GetComponent<BaseEntity>();
+            if (component != null)
+            {
+                if (component.prefabID == 2508295857 && component.OwnerID == 0)
+                {
+                    component.Kill();
+                }
+            }
+        }
+
+        void OnPlayerConnected(Network.Message packet)
+        {
+            var player = packet.Player();
+            //Contact OpenNexus Hub and get any contents for this player.
+            //To Do
+        }
+
+        private void Unload()
+        {
+            //Remove static reference
+            plugin = null;
+            //Remove any NexusFerrys
+            foreach (var basenetworkable in BaseNetworkable.serverEntities) { if (basenetworkable.gameObject.name == "NexusFerry" && !basenetworkable.IsDestroyed) { basenetworkable.Kill(); } }
+        }
+
+
         public class OpenNexusFerry : BaseEntity
         {
             public float MoveSpeed = 10f;
             public float TurnSpeed = 1f;
-            public float WaitTime = 30f;
+            public float WaitTime = 10f;
             private global::NexusFerry.State _state;
             private NexusDock _targetDock;
             private bool _isTransferring;
@@ -233,52 +248,166 @@ namespace Oxide.Plugins
                 }
             }
 
-            private bool IsPlayerReady(global::BasePlayer player)
+            private List<BaseNetworkable> GetFerryContents()
             {
-                return player != null && player.IsConnected && !player.IsLoadingAfterTransfer();
-            }
-
-            private List<BaseEntity> GetFerryContents()
-            {
-                List<global::BaseEntity> list = Pool.GetList<global::BaseEntity>();
-                foreach (global::BaseEntity baseEntity in this.children)
+                List<BaseNetworkable> list = Pool.GetList<BaseNetworkable>();
+                foreach (BaseNetworkable baseEntity in this.children)
                 {
-                 list.Add(baseEntity);
+                    //excude ferrys turrets
+                    if (baseEntity is NPCAutoTurret) continue;
+                    //find mounted players
+                    if (baseEntity is BaseVehicle)
+                    {
+                        BaseVehicle bv = baseEntity as BaseVehicle;
+                        foreach (BaseVehicle.MountPointInfo allMountPoint in bv.allMountPoints)
+                        {
+                            if (allMountPoint.mountable != null)
+                            {
+                                BasePlayer bp = null;
+                                bp = allMountPoint.mountable._mounted;
+                                if (bp != null) { list.Add(bp); }
+                            }
+                        }
+                    } 
+                    list.Add(baseEntity);
                 }
                 return list;
+            }
+
+            private string CreatePacket(List<BaseNetworkable> Transfere)
+            {
+                string dat = "";
+                foreach (BaseNetworkable entity in Transfere)
+                {
+                    BasePlayer baseplayer = entity as BasePlayer;
+                    if (baseplayer?.inventory != null)
+                    {
+                        var data = new Dictionary<string, object>();
+                        var itemlist = new List<Dictionary<string, object>>();
+                        var playerdata = new Dictionary<string, object>
+                        {
+                        { "ownerid", baseplayer.UserIDString },
+                        { "health", baseplayer._health },
+                        { "hydration", baseplayer.metabolism.hydration.value },
+                        { "calories", baseplayer.metabolism.calories.value }
+                        };
+                        itemlist.Add(playerdata);
+                        data.Add("player", itemlist);
+                        dat = Newtonsoft.Json.JsonConvert.SerializeObject(data);
+                        data.Clear();
+                        itemlist.Clear();
+
+                        foreach (var item in baseplayer.inventory.AllItems())
+                        {
+                             var itemdata = new Dictionary<string, object>
+                        {
+                        { "condition", item.condition },
+                        { "id", item.info.itemid },
+                        { "amount", item.amount },
+                        { "skinid", item.skin },
+                        { "ownerid", baseplayer.UserIDString },
+                        };
+                            itemlist.Add(itemdata);
+                        }
+                        data.Add("playeritems", itemlist);
+                        dat += Newtonsoft.Json.JsonConvert.SerializeObject(data);
+                    }
+                    MiniCopter helicopter = entity as MiniCopter;
+                    if(helicopter != null)
+                    {
+                        var data = new Dictionary<string, object>();
+                        var itemlist = new List<Dictionary<string, object>>();
+                        var itemdata = new Dictionary<string, object>
+                        {
+                        { "ownerid", helicopter.OwnerID.ToString() },
+                        { "prefabid", helicopter.prefabID.ToString() },
+                        { "health", helicopter._health.ToString() },
+                        { "fuel", helicopter.GetFuelSystem().GetFuelAmount().ToString() }
+                        };
+                        itemlist.Add(itemdata);
+                        data.Add("helicopter", itemlist);
+                        dat += Newtonsoft.Json.JsonConvert.SerializeObject(data);
+                    }
+
+                    ModularCar car = entity as ModularCar;
+                    if (car != null)
+                    {
+                        var data = new Dictionary<string, object>();
+                        var itemlist = new List<Dictionary<string, object>>();
+                        var itemdata = new Dictionary<string, object>
+                        {
+                        { "ownerid", car.OwnerID.ToString() },
+                        { "prefabid", car.prefabID.ToString() },
+                        { "health", car._health.ToString() },
+                        { "fuel", car.GetFuelSystem().GetFuelAmount().ToString() }
+                        };
+                        itemlist.Add(itemdata);
+                        data.Add("modularcar", itemlist);
+                        dat += Newtonsoft.Json.JsonConvert.SerializeObject(data);
+                    }
+                }
+                plugin.Puts(dat);
+                return dat;
+            }
+
+            public static string Base64Encode(string plainText)
+            {
+                var plainTextBytes = System.Text.Encoding.UTF8.GetBytes(plainText);
+                return System.Convert.ToBase64String(plainTextBytes);
             }
 
             private void TransferToNextZone()
             {
                 if (!this._isTransferring && this._sinceLastTransferAttempt >= 5f)
                 {
-                        this._isTransferring = true;
-                        string text = "BMGJET NEXUS";
-                        this._state = global::NexusFerry.State.Transferring;
-                        Debug.Log("Sending ferry to " + text);
-
-                        //To Do
-                        //Sync Data and send user
-
-
-                        List<BaseEntity> list = GetFerryContents();
-                        foreach (BaseEntity be in list)
+                    this._isTransferring = true;
+                    this._state = global::NexusFerry.State.Transferring;
+                    //Get all entitys on the  ferry to transfere
+                    List<BaseNetworkable> list = GetFerryContents();
+                    //Check if anything to transfere
+                    if (list.Count != 0)
+                    {
+                        //Create a packet to send to nexus hub
+                        string Datapacket = (CreatePacket(list));
+                        Dictionary<string, string> headers = new Dictionary<string, string> { { "Content-Length", Datapacket.Length.ToString() }, { "User-Agent", plugin.OpenNexusKey } };
+                        plugin.webrequest.Enqueue(plugin.OpenNexusHub, Datapacket, (code, response) =>
                         {
-
-                            if (be is BasePlayer)
+                            if (response == null || code != 200)
                             {
-                                if (be.ToPlayer().IsConnected)
+                                plugin.Puts("Nexus Packet Failed ");
+                                foreach (BaseEntity be in list)
                                 {
-                                    be.ToPlayer().ChatMessage("Switch Server");
-                                ConsoleNetwork.SendClientCommand(be.net.connection, "nexus.redirect", new object[]
+                                    if (be is BasePlayer)
+                                    {
+                                        if (be.ToPlayer().IsConnected)
+                                        {
+                                            be.ToPlayer().ChatMessage("Nexus Hub did not respond!");
+                                        }
+                                    }
+                                }
+                            }
+                            else
+                            {
+                                plugin.Puts("Nexus Packet Transfered");
+                                foreach (BaseEntity be in list)
                                 {
-                                    ServerIP,
-                                    ServerPort
-                                });
-                                be.ToPlayer().Kick("Redirecting to another zone...");
+                                    if (be is BasePlayer)
+                                    {
+                                        if (be.ToPlayer().IsConnected)
+                                        {
+                                            be.ToPlayer().ChatMessage("Switch Server");
+                                            ConsoleNetwork.SendClientCommand(be.net.connection, "nexus.redirect", new object[]
+                                            {
+                                                plugin.ServerIP,
+                                                plugin.ServerPort
+                                            });
+                                            be.ToPlayer().Kick("Redirecting to another zone...");
+                                        }
+                                    }
+                                }
                             }
-                            }
-                        }
+                        }, plugin, RequestMethod.POST, headers, 60f);
+                    }
                     this._state = NexusFerry.State.Arrival;
                 }
             }
