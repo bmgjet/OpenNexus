@@ -1,5 +1,10 @@
 //None of this code is to be used in any paid project/plugins
 
+//ToDo
+//Weapon Mods
+//Other Vechiles
+//Plugin Data
+
 //Setting Up Dock On Map
 //Make Custom Prefab group and name it SERVER=ipaddress,PORT=portnumber
 //Make sure to tick Convert selection into group.
@@ -9,6 +14,7 @@
 
 using Facepunch;
 using Facepunch.Utility;
+using Network;
 using Oxide.Core;
 using Oxide.Core.Libraries;
 using ProtoBuf;
@@ -26,68 +32,21 @@ namespace Oxide.Plugins
     public class OpenNexus : RustPlugin
     {
         //Main Settings
-        public string OpenNexusHub = "http://localhost/OpenNexus.php"; //Address of opennexus php script
-        public string OpenNexusKey = "bmgjet123"; //Key to limit access to only your server
-        public int ExtendFerryDistance = 100; ////Extend how far the ferry goes before it triggers transistion
+        public string OpenNexusHub = ""; //Address of opennexus php script
+        public string OpenNexusKey = ""; //Key to limit access to only your server
+        public int ExtendFerryDistance = 0; ////Extend how far the ferry goes before it triggers transistion
 
         //Advanced Settings
         public string thisserverip = ""; //Over-ride auto detected ip
         public string thisserverport = ""; //Over-ride auto detected port
-        public bool UseCompression = true; //Compress Data Packets
-
+        public bool UseCompression = true; //Compress Data Packets (Recommended since it 1/4 the size of the data)
+        //End Settings
         public bool IsBase64String(string s) { s = s.Trim(); return (s.Length % 4 == 0) && Regex.IsMatch(s, @"^[a-zA-Z0-9\+/]*={0,3}$", RegexOptions.None); }
+        private void AdjustConnectionScreen(BasePlayer player, string msg) { if (Net.sv.write.Start()) { Net.sv.write.PacketID(Message.Type.Message); Net.sv.write.String(msg); Net.sv.write.Send(new SendInfo(player.Connection)); } }
+        public Vector3 StringToVector3(string sVector) { if (sVector.StartsWith("(") && sVector.EndsWith(")")) { sVector = sVector.Substring(1, sVector.Length - 2); } string[] sArray = sVector.Split(','); Vector3 result = new Vector3(float.Parse(sArray[0]), float.Parse(sArray[1]), float.Parse(sArray[2])); return result; }
+        public Quaternion StringToQuaternion(string sVector) { if (sVector.StartsWith("(") && sVector.EndsWith(")")) { sVector = sVector.Substring(1, sVector.Length - 2); } string[] sArray = sVector.Split(','); Quaternion result = new Quaternion(float.Parse(sArray[0]), float.Parse(sArray[1]), float.Parse(sArray[2]), float.Parse(sArray[3])); return result; }
+        private void StartSleeping(BasePlayer player){if (!player.IsSleeping()){Interface.CallHook("OnPlayerSleep", player);player.SetPlayerFlag(BasePlayer.PlayerFlags.Sleeping, true);player.sleepStartTime = Time.time;BasePlayer.sleepingPlayerList.Add(player);player.CancelInvoke("InventoryUpdate");player.CancelInvoke("TeamUpdate");player.SendNetworkUpdateImmediate();}}
         public static OpenNexus plugin;
-
-        //Sync boats to start at same type
-        public bool ServerSynced = false;
-        public bool HasPacket = false;
-        private void SyncServers()
-        {
-            //Ping DataPacket
-            string Datapacket = "PING";
-            Dictionary<string, string> headers = new Dictionary<string, string> { { "Content-Length", Datapacket.Length.ToString() }, { "User-Agent", OpenNexusKey }, { "FROM", thisserverip + "-" + thisserverport }, { "TARGET", "null" } };
-            webrequest.Enqueue(plugin.OpenNexusHub, Datapacket, (code, response) =>
-            {
-                if (response == null || code != 200)
-                {
-                    timer.Once(10f, () => SyncServers());
-                    Puts("No Reply From OpenNexus Hub");
-                    return;
-                }
-                else
-                {
-                    if(response == "WAIT")
-                    {
-                        //Connected but need more then 1 server connected
-                        timer.Once(2f, () => { Puts("Waiting for 2 servers on OpenNexus Hub"); SyncServers(); });
-                        return;
-                    }
-                    //Use responce time as keyframe for sync
-                    float number;
-                    if (Single.TryParse(response, out number))
-                    {
-                        Puts("Setting Sync Frame in " + number.ToString() + " Secs");
-                        timer.Once(number, () => { plugin.Puts("OpenNexus Synced"); ServerSynced = true; });
-                        return;
-                    }
-                    Puts(response);
-                    timer.Once(2f, () => { Puts("Bad Sync Packet"); SyncServers(); });
-                }
-            }, this, RequestMethod.POST, headers, 10f);
-        }
-
-        private void Init()
-        {
-            //Set settings have been entered
-            if (OpenNexusHub == "" || OpenNexusKey == "")
-            {
-                Puts("OpenNexus Plugin hasnt been setup correctly!!!");
-                setup = false;
-                return;
-            }
-            setup = true;
-        }
-
         private bool setup;
         private void OnServerInitialized(bool initial)
         {
@@ -211,20 +170,81 @@ namespace Oxide.Plugins
                     basenetworkable.Kill();
                 }
             }
+            //Send Unsync command to server
+            UnSyncServers();
             //Remove static reference
             plugin = null;
         }
 
-        public Vector3 StringToVector3(string sVector)
+        public bool ServerSynced = false;
+        public bool HasPacket = false;
+        private void SyncServers()
         {
-            //Convert Vector3 String to Vector3
-            if (sVector.StartsWith("(") && sVector.EndsWith(")")) { sVector = sVector.Substring(1, sVector.Length - 2); }
-            string[] sArray = sVector.Split(',');
-            Vector3 result = new Vector3(float.Parse(sArray[0]), float.Parse(sArray[1]), float.Parse(sArray[2]));
-            return result;
+            //Ping DataPacket
+            string Datapacket = "PING";
+            Dictionary<string, string> headers = new Dictionary<string, string> { { "Content-Length", Datapacket.Length.ToString() }, { "User-Agent", OpenNexusKey }, { "FROM", thisserverip + "-" + thisserverport }, { "TARGET", "null" }, { "CMD", "PING" } };
+            webrequest.Enqueue(plugin.OpenNexusHub, Datapacket, (code, response) =>
+            {
+                if (response == null || code != 200)
+                {
+                    timer.Once(10f, () => SyncServers());
+                    Puts("No Reply From OpenNexus Hub");
+                    return;
+                }
+                else
+                {
+                    if (response == "WAIT")
+                    {
+                        //Connected but need more then 1 server connected
+                        timer.Once(2f, () => { Puts("Waiting for atleast 2 servers on OpenNexus Hub"); SyncServers(); });
+                        return;
+                    }
+                    string[] TimeStamps = response.Split(' ');
+                    if (TimeStamps.Length != 2) { Puts("Bad TimeStamp Format in ping"); timer.Once(10f, () => SyncServers()); return; }
+
+                    try
+                    {
+                        float SyncTime = (int.Parse(TimeStamps[0]) + 30f) - int.Parse(TimeStamps[1]);
+                        if (SyncTime < 0)
+                        {
+                            Puts("Bad TimeStamp Value Retrying in 20sec");
+                            timer.Once(10f, () => { UnSyncServers(); });
+                            timer.Once(20f, () => { SyncServers(); });
+                            return;
+                        }
+                        Puts("Setting Sync Frame in " + SyncTime.ToString() + " Secs");
+                        timer.Once(SyncTime, () => { plugin.Puts("OpenNexus Synced"); ServerSynced = true; });
+                        return;
+                    }
+                    catch
+                    { }
+                    timer.Once(5f, () => { Puts("Bad Sync Packet"); SyncServers(); });
+                }
+            }, this, RequestMethod.POST, headers, 10f);
         }
 
-        public void ReadPacket(string packet, Transform FerryPos)
+        private void UnSyncServers()
+        {
+            //Ping DataPacket
+            string Datapacket = "";
+            Dictionary<string, string> headers = new Dictionary<string, string> { { "Content-Length", Datapacket.Length.ToString() }, { "User-Agent", OpenNexusKey }, { "FROM", thisserverip + "-" + thisserverport }, { "TARGET", "null" }, { "CMD", "LEAVE" } };
+            webrequest.Enqueue(plugin.OpenNexusHub, Datapacket, (code, response) =>
+            { }, this, RequestMethod.POST, headers, 10f);
+        }
+
+        private void Init()
+        {
+            //Set settings have been entered
+            if (OpenNexusHub == "" || OpenNexusKey == "")
+            {
+                Puts("OpenNexus Plugin hasnt been setup correctly!!!");
+                setup = false;
+                return;
+            }
+            setup = true;
+        }
+
+        public void ReadPacket(string packet, OpenNexusFerry Ferry)
         {
             //Checks its a opennexus packet
             if (packet.Contains("<OpenNexus>"))
@@ -245,7 +265,7 @@ namespace Oxide.Plugins
                     }
                     if (packets.Key.Contains("BasePlayer"))
                     {
-                        var bp = ProcessBasePlayer(packets.Value, FerryPos);
+                        var bp = ProcessBasePlayer(packets.Value, Ferry);
                         if (bp != null)
                         {
                             foreach (KeyValuePair<string, BaseNetworkable> m in bp)
@@ -257,12 +277,12 @@ namespace Oxide.Plugins
                     }
                     if (packets.Key.Contains("MiniCopter"))
                     {
-                        var mc = ProcessHeli(packets.Value, FerryPos);
+                        var mc = ProcessHeli(packets.Value, Ferry);
                         if (mc != null)
                         {
                             foreach (KeyValuePair<string, BaseNetworkable> m in mc)
                             {
-                             CreatedEntitys.Add(m.Key,m.Value);
+                                CreatedEntitys.Add(m.Key, m.Value);
                             }
                         }
                         continue;
@@ -274,7 +294,7 @@ namespace Oxide.Plugins
                     }
                     if (packets.Key.Contains("BaseHorse"))
                     {
-                        var rh = ProcessHorse(packets.Value, FerryPos);
+                        var rh = ProcessHorse(packets.Value, Ferry);
                         if (rh != null)
                         {
                             foreach (KeyValuePair<string, BaseNetworkable> r in rh)
@@ -288,9 +308,9 @@ namespace Oxide.Plugins
                     if (packets.Key.Contains("ModularCarEngine"))
                     {
                         timer.Once(0.5f, () =>
-                         {
-                             ProcessModuleParts(packets.Value, SpawnedCars, 0);
-                         });
+                        {
+                            ProcessModuleParts(packets.Value, SpawnedCars, 0);
+                        });
                         continue;
                     }
                     if (packets.Key.Contains("ModularCarStorage"))
@@ -313,13 +333,13 @@ namespace Oxide.Plugins
                     {
                         timer.Once(0.5f, () =>
                         {
-                            ProcessModuleParts(packets.Value, SpawnedCars, int.Parse(packets.Key.Replace("ModularCarBags[","").Replace("]","")));
+                            ProcessModuleParts(packets.Value, SpawnedCars, int.Parse(packets.Key.Replace("ModularCarBags[", "").Replace("]", "")));
                         });
                         continue;
                     }
                     if (packets.Key.Contains("ModularCar"))
                     {
-                        var sc = ProcessCar(packets.Value, FerryPos);
+                        var sc = ProcessCar(packets.Value, Ferry);
                         if (sc != null)
                         {
                             foreach (KeyValuePair<string, ModularCar> c in sc)
@@ -331,6 +351,311 @@ namespace Oxide.Plugins
                     }
                 }
             }
+        }
+
+        private Dictionary<string, BaseNetworkable> ProcessHeli(List<Dictionary<string, string>> packets, OpenNexusFerry FerryPos)
+        {
+            //Process mini and scrap heli
+            Quaternion rot = new Quaternion();
+            Vector3 pos = Vector3.zero;
+            string prefab = "";
+            float health = 0;
+            float maxhealth = 0;
+            int fuel = 0;
+            ulong ownerid = 0;
+            string netid = "";
+            foreach (Dictionary<string, string> i in packets)
+            {
+                foreach (KeyValuePair<string, string> ii in i)
+                {
+                    switch (ii.Key)
+                    {
+                        case "rotation":
+                            rot = StringToQuaternion(ii.Value);
+                            break;
+                        case "position":
+                            pos = StringToVector3(ii.Value);
+                            break;
+                        case "prefab":
+                            prefab = ii.Value;
+                            break;
+                        case "health":
+                            health = float.Parse(ii.Value);
+                            break;
+                        case "maxhealth":
+                            maxhealth = float.Parse(ii.Value);
+                            break;
+                        case "fuel":
+                            fuel = int.Parse(ii.Value);
+                            break;
+                        case "ownerid":
+                            ownerid = ulong.Parse(ii.Value);
+                            break;
+                        case "netid":
+                            netid = ii.Value;
+                            break;
+                    }
+                }
+            }
+            //Create heli
+            MiniCopter minicopter = GameManager.server.CreateEntity(prefab) as MiniCopter;
+            if (minicopter == null) return null;
+            //spawn and setit up
+            minicopter.Spawn();
+            minicopter.SetMaxHealth(maxhealth);
+            minicopter.health = health;
+            if (fuel != 0)
+            {
+                //Apply fuel ammount
+                var fuelContainer = minicopter?.GetFuelSystem()?.GetFuelContainer()?.inventory;
+                if (fuelContainer != null)
+                {
+                    var lowgrade = ItemManager.CreateByItemID(-946369541, fuel);
+                    if (!lowgrade.MoveToContainer(fuelContainer))
+                    {
+                        lowgrade.Remove();
+                    }
+                }
+            }
+            minicopter.OwnerID = ownerid;
+            minicopter.SetParent(FerryPos);
+            minicopter.transform.localPosition = pos;
+            minicopter.transform.localRotation = rot;
+            minicopter.TransformChanged();
+            minicopter.SendNetworkUpdateImmediate();
+            return new Dictionary<string, BaseNetworkable>() { { netid, minicopter } };
+        }
+
+        private Dictionary<string, ModularCar> ProcessCar(List<Dictionary<string, string>> packets, OpenNexusFerry FerryPos)
+        {
+            //Process modular car
+            Quaternion rot = new Quaternion();
+            Vector3 pos = Vector3.zero;
+            string prefab = "";
+            float health = 0;
+            float maxhealth = 0;
+            int fuel = 0;
+            ulong ownerid = 0;
+            string modules = "";
+            string conditions = "";
+            int slots = 0;
+            string netid = "";
+            foreach (Dictionary<string, string> i in packets)
+            {
+                foreach (KeyValuePair<string, string> ii in i)
+                {
+                    switch (ii.Key)
+                    {
+                        case "rotation":
+                            rot = StringToQuaternion(ii.Value);
+                            break;
+                        case "position":
+                            pos = StringToVector3(ii.Value);
+                            break;
+                        case "prefab":
+                            prefab = ii.Value;
+                            break;
+                        case "health":
+                            health = float.Parse(ii.Value);
+                            break;
+                        case "maxhealth":
+                            maxhealth = float.Parse(ii.Value);
+                            break;
+                        case "fuel":
+                            fuel = int.Parse(ii.Value);
+                            break;
+                        case "ownerid":
+                            ownerid = ulong.Parse(ii.Value);
+                            break;
+                        case "slots":
+                            slots = int.Parse(ii.Value);
+                            break;
+                        case "modules":
+                            modules = ii.Value;
+                            break;
+                        case "conditions":
+                            conditions = ii.Value;
+                            break;
+                        case "netid":
+                            netid = ii.Value;
+                            break;
+                    }
+                }
+            }
+            //Create car
+            ModularCar car = GameManager.server.CreateEntity(prefab) as ModularCar;
+            if (car == null) return null;
+            //Spawn custom modules
+            car.spawnSettings.useSpawnSettings = true;
+            //Read module data and get it ready
+            AttacheModules(car, modules, conditions);
+            car.Spawn();
+            //setup health
+            car.SetMaxHealth(maxhealth);
+            car.health = health;
+            string[] Modconditions = conditions.Split('|');
+            NextTick(() =>
+            {
+                //Apply custom modules health
+                int cond = 0;
+                foreach (BaseVehicleModule vm in car.AttachedModuleEntities)
+                {
+                    try{vm.health = float.Parse(Modconditions[cond++]);}catch{vm.health = 50f;}
+                }
+            });
+            if (fuel != 0)
+            {
+                //apply fuel amount
+                var fuelContainer = car?.GetFuelSystem()?.GetFuelContainer()?.inventory;
+                if (fuelContainer != null)
+                {
+                    var lowgrade = ItemManager.CreateByItemID(-946369541, fuel);
+                    if (!lowgrade.MoveToContainer(fuelContainer))
+                    {
+                        lowgrade.Remove();
+                    }
+                }
+            }
+            car.OwnerID = ownerid;
+            car.SetParent(FerryPos);
+            car.transform.localPosition = pos;
+            car.transform.localRotation = rot;
+            car.TransformChanged();
+            car.SendNetworkUpdateImmediate();
+            return new Dictionary<string, ModularCar>() { { netid, car } };
+        }
+
+        //custom modules waiting list
+        private ItemModVehicleModule[] CarModules;
+        object OnVehicleModulesAssign(ModularCar car, ItemModVehicleModule[] modulePreset)
+        {
+            //Car is spawning with custom flag Check if there custom modules waiting
+            if (CarModules != null)
+            {
+                //apply modules to sockets
+                int socket = 0;
+                foreach (ItemModVehicleModule im in CarModules)
+                {
+                    modulePreset[socket] = im;
+                    socket += im.socketsTaken;
+                }
+                CarModules = null;
+            }
+            return null;
+        }
+
+        private void AttacheModules(ModularCar modularCar, string Modules, string Conditions)
+        {
+            //Seperate module settings from packet
+            if (modularCar == null) return;
+            string[] Modshortnames = Modules.Split('|');
+            string[] Modconditions = Conditions.Split('|');
+            int conditionslot = 0;
+            List<ItemModVehicleModule> mods = new List<ItemModVehicleModule>();
+            if (Modshortnames != null && Modshortnames.Length != 0 && Modconditions != null && Modconditions.Length != 0)
+            {
+                foreach (string shortname in Modshortnames)
+                {
+                    if (shortname != null && shortname != "")
+                    {
+                        //create modules
+                        Item item = ItemManager.CreateByItemID(int.Parse(shortname), 1, 0);
+                        if (item == null) continue;
+                        item.condition = float.Parse(Modconditions[conditionslot++]);
+                        item.MarkDirty();
+                        ItemModVehicleModule component = item.info.GetComponent<ItemModVehicleModule>();
+                        if (component == null) continue;
+                        mods.Add(component);
+                    }
+                }
+                //load modules into waiting  list
+                CarModules = mods.ToArray();
+            }
+        }
+
+        private Dictionary<string, BaseNetworkable> ProcessHorse(List<Dictionary<string, string>> packets, OpenNexusFerry FerryPos)
+        {
+            //process horse
+            Quaternion rot = new Quaternion();
+            Vector3 pos = Vector3.zero;
+            int currentBreed = 0;
+            string prefab = "";
+            float maxSpeed = 0;
+            float maxHealth = 0;
+            float health = 0;
+            float maxStaminaSeconds = 0;
+            float staminaCoreSpeedBonus = 0;
+            ulong ownerid = 0;
+            string[] flags = new string[3];
+            string netid = "";
+            foreach (Dictionary<string, string> i in packets)
+            {
+                foreach (KeyValuePair<string, string> ii in i)
+                {
+                    switch (ii.Key)
+                    {
+                        case "rotation":
+                            rot = StringToQuaternion(ii.Value);
+                            break;
+                        case "position":
+                            pos = StringToVector3(ii.Value);
+                            break;
+                        case "currentBreed":
+                            currentBreed = int.Parse(ii.Value);
+                            break;
+                        case "prefab":
+                            prefab = ii.Value;
+                            break;
+                        case "health":
+                            health = float.Parse(ii.Value);
+                            break;
+                        case "maxhealth":
+                            maxHealth = float.Parse(ii.Value);
+                            break;
+                        case "maxSpeed":
+                            maxSpeed = float.Parse(ii.Value);
+                            break;
+                        case "maxStaminaSeconds":
+                            maxStaminaSeconds = float.Parse(ii.Value);
+                            break;
+                        case "staminaCoreSpeedBonus":
+                            staminaCoreSpeedBonus = float.Parse(ii.Value);
+                            break;
+                        case "ownerid":
+                            ownerid = ulong.Parse(ii.Value);
+                            break;
+                        case "flags":
+                            flags = ii.Value.Split(' ');
+                            break;
+                        case "netid":
+                            netid = ii.Value;
+                            break;
+                    }
+                }
+            }
+            //create horse
+            RidableHorse horse = GameManager.server.CreateEntity(prefab) as RidableHorse;
+            if (horse == null) return null;
+            horse.Spawn();
+            //set its health
+            horse.SetMaxHealth(maxHealth);
+            horse.SetHealth(health);
+            //set its breed and stats
+            horse.ApplyBreed(currentBreed);
+            horse.maxSpeed = maxSpeed;
+            horse.maxStaminaSeconds = maxStaminaSeconds;
+            horse.staminaSeconds = maxStaminaSeconds;
+            horse.staminaCoreSpeedBonus = staminaCoreSpeedBonus;
+            horse.OwnerID = ownerid;
+            horse.SetFlag(BaseEntity.Flags.Reserved4, bool.Parse(flags[0]));
+            horse.SetFlag(BaseEntity.Flags.Reserved5, bool.Parse(flags[1]));
+            horse.SetFlag(BaseEntity.Flags.Reserved6, bool.Parse(flags[2]));
+            horse.SetParent(FerryPos);
+            horse.transform.localPosition = pos;
+            horse.transform.localRotation = rot;
+            horse.TransformChanged();
+            horse.SendNetworkUpdateImmediate();
+            return new Dictionary<string, BaseNetworkable>() { { netid, horse } };
         }
 
         private void ProcessModuleParts(List<Dictionary<string, string>> packets, Dictionary<string, ModularCar> SpawnedCars, int type)
@@ -477,7 +802,7 @@ namespace Oxide.Plugins
             }
         }
 
-        private Dictionary<string, BaseNetworkable> ProcessBasePlayer(List<Dictionary<string, string>> packets, Transform FerryPos)
+        private Dictionary<string, BaseNetworkable> ProcessBasePlayer(List<Dictionary<string, string>> packets, OpenNexusFerry FerryPos)
         {
             //Process BasePlayer
             Quaternion rot = new Quaternion();
@@ -495,10 +820,10 @@ namespace Oxide.Plugins
                     switch (ii.Key)
                     {
                         case "rotation":
-                            rot = FerryPos.rotation * Quaternion.Euler(plugin.StringToVector3(ii.Value));
+                            rot = StringToQuaternion(ii.Value);
                             break;
                         case "position":
-                            pos = FerryPos.position + plugin.StringToVector3(ii.Value);
+                            pos = StringToVector3(ii.Value);
                             break;
                         case "steamid":
                             steamid = ii.Value;
@@ -523,11 +848,9 @@ namespace Oxide.Plugins
             }
             //Server Server for player already spawned;
             BasePlayer player = BasePlayer.FindAwakeOrSleeping(steamid);
-            if(player == null ) player = BasePlayer.FindBot(ulong.Parse(steamid)); //Allows BMGbots to chase players across servers
+            if (player == null) player = BasePlayer.FindBot(ulong.Parse(steamid)); //Allows BMGbots to chase players across servers
             if (player != null)
             {
-                //Player already exists
-                //player.ClientRPCPlayer(null, player, "StartLoading"); //Throw them back into loading screen to hide 2-3 frames of where they were being seen.
                 //Drop all items on that player where they were asleep
                 if (player.inventory.AllItems().Length != 0)
                 {
@@ -537,18 +860,9 @@ namespace Oxide.Plugins
                     }
                 }
                 player.Kill();
-                //player.displayName = name;
-                //player.InitializeHealth(health, maxhealth);
-                //player.metabolism.hydration.SetValue(hydration);
-                //player.metabolism.calories.SetValue(calories);
-                //player.transform.rotation = rot;
-                //player.SendNetworkUpdateImmediate();
-                //TeleportPlayer(player, pos);
-                //return new Dictionary<string, BaseNetworkable>() { { steamid, player } };
             }
             //Create new player for them to spawn into
-
-            player = global::GameManager.server.CreateEntity("assets/prefabs/player/player.prefab", pos, rot, true).ToPlayer();
+            player = global::GameManager.server.CreateEntity("assets/prefabs/player/player.prefab", FerryPos.transform.position, FerryPos.transform.rotation, true).ToPlayer();
             player.lifestate = global::BaseCombatEntity.LifeState.Alive;
             player.ResetLifeStateOnSpawn = false;
             player.Spawn();
@@ -565,6 +879,10 @@ namespace Oxide.Plugins
             player.metabolism.hydration.SetValue(hydration);
             player.metabolism.calories.SetValue(calories);
             DebugEx.Log(string.Format("{0} with steamid {1} joined from OpenNexus", player.displayName, player.userID), StackTraceLogType.None);
+            player.SetParent(FerryPos);
+            player.transform.localPosition = pos;
+            player.transform.localRotation =rot;
+            player.TransformChanged();
             player.SendNetworkUpdateImmediate();
             return new Dictionary<string, BaseNetworkable>() { { steamid, player } };
         }
@@ -587,20 +905,6 @@ namespace Oxide.Plugins
             {
                 player.SetServerFall(false);
                 player.ForceUpdateTriggers();
-            }
-        }
-
-        private void StartSleeping(BasePlayer player)
-        {
-            if (!player.IsSleeping())
-            {
-                Interface.CallHook("OnPlayerSleep", player);
-                player.SetPlayerFlag(BasePlayer.PlayerFlags.Sleeping, true);
-                player.sleepStartTime = Time.time;
-                BasePlayer.sleepingPlayerList.Add(player);
-                player.CancelInvoke("InventoryUpdate");
-                player.CancelInvoke("TeamUpdate");
-                player.SendNetworkUpdateImmediate();
             }
         }
 
@@ -644,30 +948,9 @@ namespace Oxide.Plugins
                     }
                 }
             }
-            if (CreatedEntitys.ContainsKey(ownerid))
-            {
-                //Find what the item belongs to
-                var FoundEntity = CreatedEntitys[ownerid];
-                if (FoundEntity != null)
-                {
-                    BasePlayer bp = FoundEntity as BasePlayer;
-                    if (bp != null)
-                    {
-                        //Refersh baseplayer with new items on them
-                        NextTick(() =>
-                        {
-                            foreach (Item item in bp.inventory.containerBelt.itemList)
-                            {
-                                item.MarkDirty();
-                            }
-                            bp.SendNetworkUpdateImmediate();
-                        });
-                    }
-                }
-            }
         }
 
-        private void GiveContents(string ownerid, int id,float condition,int amount,ulong skinid,int code,int slot, Dictionary<string, BaseNetworkable> CreatedEntitys)
+        private void GiveContents(string ownerid, int id, float condition, int amount, ulong skinid, int code, int slot, Dictionary<string, BaseNetworkable> CreatedEntitys)
         {
             if (CreatedEntitys.ContainsKey(ownerid))
             {
@@ -680,30 +963,63 @@ namespace Oxide.Plugins
                     if (rh != null)
                     {
                         //put into horse inventory
-                        rh.inventory.Insert(CreateItem(id,amount,skinid,condition,code));
+                        rh.inventory.Insert(CreateItem(id, amount, skinid, condition, code));
                         return;
                     }
                     //BasePlayers items
                     BasePlayer bp = FoundEntity as BasePlayer;
                     if (bp != null)
                     {
-                        switch(slot)
+                        switch (slot)
                         {
                             //Put back in players inventory
                             case 0:
-                                bp.inventory.containerWear.Insert(CreateItem(id, amount, skinid, condition, code));
+                                //bp.inventory.containerWear.Insert(CreateItem(id, amount, skinid, condition, code));
+                                CreateItem(id, amount, skinid, condition, code).MoveToContainer(bp.inventory.containerWear);
                                 break;
                             case 1:
-                                bp.inventory.containerBelt.Insert(CreateItem(id, amount, skinid, condition, code));
+                                Item item = BuildWeapon(id, skinid, condition, code, null);
+                                //bp.inventory.containerBelt.Insert(item); //Shows up but isnt usable.
+                                item.MoveToContainer(bp.inventory.containerBelt); //Nothing at all shows up.
                                 break;
                             case 2:
-                                bp.inventory.containerMain.Insert(CreateItem(id, amount, skinid, condition, code));
+                                // bp.inventory.containerMain.Insert(CreateItem(id, amount, skinid, condition, code));
+                                CreateItem(id, amount, skinid, condition, code).MoveToContainer(bp.inventory.containerMain);
                                 break;
                         }
                         return;
                     }
                 }
             }
+        }
+
+        private Item BuildWeapon(int id, ulong skin, float condition, int code, List<int> mods)
+        {
+            Item item = CreateItem(id, 1, skin, condition, code);
+            //Setup guns so they work when given to player
+            var weapon = item.GetHeldEntity() as BaseProjectile;
+            if (weapon != null)
+            {
+                (item.GetHeldEntity() as BaseProjectile).primaryMagazine.contents = (item.GetHeldEntity() as BaseProjectile).primaryMagazine.capacity;
+            }
+            //Set up mods on gun
+            if (mods != null)
+            {
+                foreach (var mod in mods)
+                {
+                    item.contents.AddItem(BuildItem(mod, 1, 0, condition,code,0).info, 1);
+                }
+            }
+            return item;
+        }
+
+        private Item BuildItem(int itemid, int amount, ulong skin, float condition, int code, int blueprintTarget)
+        {
+            if (amount < 1) amount = 1;
+            Item item = CreateItem(itemid, amount, skin, condition, code);
+            if (blueprintTarget != 0)
+                item.blueprintTarget = blueprintTarget;
+            return item;
         }
 
         private Item CreateItem(int id, int amount, ulong skinid, float condition, int code)
@@ -717,7 +1033,7 @@ namespace Oxide.Plugins
             return item;
         }
 
-        private Item ExtraChecks(Item item,int code)
+        private Item ExtraChecks(Item item, int code)
         {
             //Reapply the code to keys
             if (item.info.shortname == "car.key" || item.info.shortname == "door.key")
@@ -730,300 +1046,7 @@ namespace Oxide.Plugins
             return item;
         }
 
-        private Dictionary<string, BaseNetworkable> ProcessHeli(List<Dictionary<string,string>> packets,Transform FerryPos)
-        {
-            //Process mini and scrap heli
-            Quaternion rot = new Quaternion();
-            Vector3 pos = Vector3.zero;
-            string prefab = "";
-            float health = 0;
-            float maxhealth = 0;
-            int fuel = 0;
-            ulong ownerid = 0;
-            string netid = "";
-            foreach (Dictionary<string, string> i in packets)
-            {
-                foreach (KeyValuePair<string, string> ii in i)
-                {
-                    switch (ii.Key)
-                    {
-                        case "rotation":
-                            rot = FerryPos.rotation * Quaternion.Euler(plugin.StringToVector3(ii.Value));
-                            break;
-                        case "position":
-                            pos = FerryPos.position + plugin.StringToVector3(ii.Value);
-                            break;
-                        case "prefab":
-                            prefab = ii.Value;
-                            break;
-                        case "health":
-                            health = float.Parse(ii.Value);
-                            break;
-                        case "maxhealth":
-                            maxhealth = float.Parse(ii.Value);
-                            break;
-                        case "fuel":
-                            fuel = int.Parse(ii.Value);
-                            break;
-                        case "ownerid":
-                            ownerid = ulong.Parse(ii.Value);
-                            break;
-                        case "netid":
-                            netid = ii.Value;
-                            break;
-                    }
-                }
-            }
-            //Create heli
-            MiniCopter minicopter = GameManager.server.CreateEntity(prefab, pos, rot) as MiniCopter;
-            if (minicopter == null) return null;
-            //spawn and setit up
-            minicopter.Spawn();
-            minicopter.SetMaxHealth(maxhealth);
-            minicopter.health = health;
-            if (fuel != 0)
-            {
-                //Apply fuel ammount
-                var fuelContainer = minicopter?.GetFuelSystem()?.GetFuelContainer()?.inventory;
-                if (fuelContainer != null)
-                {
-                    var lowgrade = ItemManager.CreateByItemID(-946369541, fuel);
-                    if (!lowgrade.MoveToContainer(fuelContainer))
-                    {
-                        lowgrade.Remove();
-                    }
-                }
-            }
-            minicopter.OwnerID = ownerid;
-            minicopter.SendNetworkUpdateImmediate();
-            return new Dictionary<string, BaseNetworkable>() { { netid, minicopter } };
-        }
-
-        private Dictionary<string, ModularCar> ProcessCar(List<Dictionary<string, string>> packets, Transform FerryPos)
-        {
-            //Process modular car
-            Quaternion rot = new Quaternion();
-            Vector3 pos = Vector3.zero;
-            string prefab = "";
-            float health = 0;
-            float maxhealth = 0;
-            int fuel = 0;
-            ulong ownerid = 0;
-            string modules = "";
-            string conditions = "";
-            int slots = 0;
-            string netid = "";
-            foreach (Dictionary<string, string> i in packets)
-            {
-                foreach (KeyValuePair<string, string> ii in i)
-                {
-                    switch (ii.Key)
-                    {
-                        case "rotation":
-                            rot = FerryPos.rotation * Quaternion.Euler(plugin.StringToVector3(ii.Value));
-                            break;
-                        case "position":
-                            pos = FerryPos.position + plugin.StringToVector3(ii.Value);
-                            break;
-                        case "prefab":
-                            prefab = ii.Value;
-                            break;
-                        case "health":
-                            health = float.Parse(ii.Value);
-                            break;
-                        case "maxhealth":
-                            maxhealth = float.Parse(ii.Value);
-                            break;
-                        case "fuel":
-                            fuel = int.Parse(ii.Value);
-                            break;
-                        case "ownerid":
-                            ownerid = ulong.Parse(ii.Value);
-                            break;
-                        case "slots":
-                            slots = int.Parse(ii.Value);
-                            break;
-                        case "modules":
-                            modules = ii.Value;
-                            break;
-                        case "conditions":
-                            conditions = ii.Value;
-                            break;
-                        case "netid":
-                            netid = ii.Value;
-                            break;
-                    }
-                }
-            }
-            //Create car
-            ModularCar car = GameManager.server.CreateEntity(prefab, pos, rot) as ModularCar;
-            if (car == null) return null;
-            //Spawn custom modules
-            car.spawnSettings.useSpawnSettings = true;
-            //Read module data and get it ready
-            AttacheModules(car, modules, conditions);
-            car.Spawn();
-            //setup health
-            car.SetMaxHealth(maxhealth);
-            car.health = health;
-            string[] Modconditions = conditions.Split('|');
-            NextTick(() =>
-            {
-                //Apply custom modules health
-                int cond = 0;
-                foreach (BaseVehicleModule vm in car.AttachedModuleEntities)
-                {
-                    vm.health = float.Parse(Modconditions[cond++]);
-                }
-            });
-            if (fuel != 0)
-            {
-                //apply fuel amount
-                var fuelContainer = car?.GetFuelSystem()?.GetFuelContainer()?.inventory;
-                if (fuelContainer != null)
-                {
-                    var lowgrade = ItemManager.CreateByItemID(-946369541, fuel);
-                    if (!lowgrade.MoveToContainer(fuelContainer))
-                    {
-                        lowgrade.Remove();
-                    }
-                }
-            }
-            car.OwnerID = ownerid;
-            car.SendNetworkUpdateImmediate();
-            return new Dictionary<string, ModularCar>() { { netid, car } };
-        }
-
-        //custom modules waiting list
-        private ItemModVehicleModule[] CarModules;
-        object OnVehicleModulesAssign(ModularCar car, ItemModVehicleModule[] modulePreset)
-        {
-            //Car is spawning with custom flag Check if there custom modules waiting
-            if (CarModules != null)
-            {
-            //apply modules to sockets
-            int socket = 0;
-            foreach (ItemModVehicleModule im in CarModules)
-            {
-                    modulePreset[socket] = im;
-                    socket += im.socketsTaken;
-                }
-                CarModules = null;
-            }
-            return null;
-        }      
-
-        private void AttacheModules(ModularCar modularCar, string Modules, string Conditions)
-        {
-            //Seperate module settings from packet
-            if (modularCar == null) return;
-            string[] Modshortnames = Modules.Split('|');
-            string[] Modconditions = Conditions.Split('|');
-            int conditionslot = 0;
-            List<ItemModVehicleModule> mods = new List<ItemModVehicleModule>();
-            if (Modshortnames != null && Modshortnames.Length != 0 && Modconditions != null && Modconditions.Length != 0)
-            {
-                foreach (string shortname in Modshortnames)
-                {
-                    if (shortname != null && shortname != "")
-                    {
-                        //create modules
-                        Item item = ItemManager.CreateByItemID(int.Parse(shortname), 1, 0);
-                        if(item == null)  continue; 
-                        item.condition = float.Parse(Modconditions[conditionslot++]);
-                        item.MarkDirty();
-                        ItemModVehicleModule component = item.info.GetComponent<ItemModVehicleModule>();
-                        if (component == null) continue; 
-                        mods.Add(component);
-                    }
-                }
-                //load modules into waiting  list
-                CarModules = mods.ToArray();
-            }
-        }
-
-        private Dictionary<string, BaseNetworkable> ProcessHorse(List<Dictionary<string, string>> packets, Transform FerryPos)
-        {
-            //process horse
-            Quaternion rot = new Quaternion();
-            Vector3 pos = Vector3.zero;
-            int currentBreed = 0;
-            string prefab = "";
-            float maxSpeed = 0;
-            float maxHealth = 0;
-            float health = 0;
-            float maxStaminaSeconds = 0;
-            float staminaCoreSpeedBonus = 0;
-            ulong ownerid = 0;
-            string[] flags = new string[3];
-            string netid = "";
-            foreach (Dictionary<string, string> i in packets)
-            {
-                foreach (KeyValuePair<string, string> ii in i)
-                {
-                    switch (ii.Key)
-                    {
-                        case "rotation":
-                            rot = FerryPos.rotation * Quaternion.Euler(plugin.StringToVector3(ii.Value));
-                            break;
-                        case "position":
-                            pos = FerryPos.position + plugin.StringToVector3(ii.Value);
-                            break;
-                        case "currentBreed":
-                            currentBreed = int.Parse(ii.Value);
-                            break;
-                        case "prefab":
-                            prefab = ii.Value;
-                            break;
-                        case "health":
-                            health = float.Parse(ii.Value);
-                            break;
-                        case "maxhealth":
-                            maxHealth = float.Parse(ii.Value);
-                            break;
-                        case "maxSpeed":
-                            maxSpeed = float.Parse(ii.Value);
-                            break;
-                        case "maxStaminaSeconds":
-                            maxStaminaSeconds = float.Parse(ii.Value);
-                            break;
-                        case "staminaCoreSpeedBonus":
-                            staminaCoreSpeedBonus = float.Parse(ii.Value);
-                            break;
-                        case "ownerid":
-                            ownerid = ulong.Parse(ii.Value);
-                            break;
-                        case "flags":
-                            flags = ii.Value.Split(' ');
-                            break;
-                        case "netid":
-                            netid = ii.Value;
-                            break;
-                    }
-                }
-            }
-            //create horse
-            RidableHorse horse = GameManager.server.CreateEntity(prefab, pos, rot) as RidableHorse;
-            if (horse == null) return null;
-            horse.Spawn();
-            //set its health
-            horse.SetMaxHealth(maxHealth);
-            horse.SetHealth(health);
-            //set its breed and stats
-            horse.ApplyBreed(currentBreed);
-            horse.maxSpeed = maxSpeed;
-            horse.maxStaminaSeconds = maxStaminaSeconds;
-            horse.staminaSeconds = maxStaminaSeconds;
-            horse.staminaCoreSpeedBonus = staminaCoreSpeedBonus;
-            horse.OwnerID = ownerid;
-            horse.SetFlag(BaseEntity.Flags.Reserved4, bool.Parse(flags[0]));
-            horse.SetFlag(BaseEntity.Flags.Reserved5, bool.Parse(flags[1]));
-            horse.SetFlag(BaseEntity.Flags.Reserved6, bool.Parse(flags[2]));
-            horse.SendNetworkUpdateImmediate();
-            return new Dictionary<string, BaseNetworkable>() { { netid, horse } };
-        }
-
-        public string CreatePacket(List<BaseNetworkable> Transfere, Transform FerryPos, string dat = "")
+        public string CreatePacket(List<BaseNetworkable> Transfere, OpenNexusFerry FerryPos, string dat = "")
         {
             //Create packet to send to hub
             var data = new Dictionary<string, List<Dictionary<string, string>>>();
@@ -1043,7 +1066,7 @@ namespace Oxide.Plugins
                     itemlist = new List<Dictionary<string, string>>();
                     foreach (var item in baseplayer.inventory.containerWear.itemList.ToArray())
                     {
-                        itemlist.Add(Contents(item, baseplayer.UserIDString,"0"));
+                        itemlist.Add(Contents(item, baseplayer.UserIDString, "0"));
                         item.Remove();
                     }
                     foreach (var item in baseplayer.inventory.containerBelt.itemList.ToArray())
@@ -1194,7 +1217,7 @@ namespace Oxide.Plugins
                         socket++;
                     }
                     //Remove items since will be killing entity on transfere and dont want loot bags dropping
-                    foreach(Item olditem in EngineParts) { olditem.Remove(); }
+                    foreach (Item olditem in EngineParts) { olditem.Remove(); }
                     foreach (Item olditem in StorageContainer) { olditem.Remove(); }
                 }
             }
@@ -1207,7 +1230,7 @@ namespace Oxide.Plugins
         {
             //Item packet
             string code = "0";
-            if(item.info.shortname == "car.key" || item.info.shortname == "door.key")
+            if (item.info.shortname == "car.key" || item.info.shortname == "door.key")
             {
                 //Add keys code data
                 code = (item.instanceData.dataInt.ToString());
@@ -1225,10 +1248,10 @@ namespace Oxide.Plugins
             return itemdata;
         }
 
-        public Dictionary<string, string> baseVechicle(BaseVehicle bv, Transform FerryPos, string socket = "0", string lockid = "0" )
+        public Dictionary<string, string> baseVechicle(BaseVehicle bv, OpenNexusFerry FerryPos, string socket = "0", string lockid = "0")
         {
             //baseVechicle packet
-            string Modules = ""; 
+            string Modules = "";
             string Conditions = "";
             //Create module and there condition list if car
             ModularCar car = bv as ModularCar;
@@ -1240,12 +1263,12 @@ namespace Oxide.Plugins
                     Conditions += moduleEntity._health + "|";
                 }
             }
-                var itemdata = new Dictionary<string, string>
+            var itemdata = new Dictionary<string, string>
                         {
                         { "ownerid", bv.OwnerID.ToString() },
                         { "prefab", bv.PrefabName },
-                        { "position", (bv.transform.position - FerryPos.position).ToString() },
-                        { "rotation", (bv.transform.rotation.eulerAngles - FerryPos.rotation.eulerAngles).ToString()},
+                        { "position", FerryPos.transform.InverseTransformPoint(bv.transform.position).ToString() },
+                        { "rotation", (bv.transform.localRotation).ToString()},
                         { "health", bv._health.ToString() },
                         { "maxhealth", bv.MaxHealth().ToString() },
                         { "fuel", bv.GetFuelSystem().GetFuelAmount().ToString() },
@@ -1258,15 +1281,15 @@ namespace Oxide.Plugins
             return itemdata;
         }
 
-        public Dictionary<string,string> basePlayer(BasePlayer baseplayer, Transform FerryPos)
+        public Dictionary<string, string> basePlayer(BasePlayer baseplayer, OpenNexusFerry FerryPos)
         {
             //baseplayer packet
             var itemdata = new Dictionary<string, string>
                         {
                         { "steamid", baseplayer.UserIDString },
                         { "name", baseplayer.displayName.ToString() },
-                        { "position", (baseplayer.transform.position - FerryPos.position).ToString() },
-                        { "rotation", (baseplayer.transform.rotation.eulerAngles - FerryPos.rotation.eulerAngles).ToString()},
+                        { "position", FerryPos.transform.InverseTransformPoint(baseplayer.transform.position).ToString() },
+                        { "rotation", (baseplayer.transform.localRotation).ToString()},
                         { "health", baseplayer._health.ToString() },
                         { "maxhealth", baseplayer._health.ToString() },
                         { "hydration", baseplayer.metabolism.hydration.value.ToString() },
@@ -1275,15 +1298,15 @@ namespace Oxide.Plugins
             return itemdata;
         }
 
-        public Dictionary<string, string> basehorse(RidableHorse horse, Transform FerryPos)
+        public Dictionary<string, string> basehorse(RidableHorse horse, OpenNexusFerry FerryPos)
         {
             //basehorse packet
             var itemdata = new Dictionary<string, string>
                         {
                         { "currentBreed", horse.currentBreed.ToString() },
                         { "prefab", horse.PrefabName },
-                        { "position", (horse.transform.position - FerryPos.position).ToString() },
-                        { "rotation", (horse.transform.rotation.eulerAngles - FerryPos.rotation.eulerAngles).ToString()},
+                        { "position", FerryPos.transform.InverseTransformPoint(horse.transform.position).ToString() },
+                        { "rotation", (horse.transform.localRotation).ToString()},
                         { "maxSpeed", horse.maxSpeed.ToString()},
                         { "maxHealth", horse._maxHealth.ToString()},
                         { "health", horse._health.ToString() },
@@ -1304,7 +1327,7 @@ namespace Oxide.Plugins
             public string ServerPort = "";
             public float MoveSpeed = 10f;
             public float TurnSpeed = 1f;
-            public float WaitTime = 60f;
+            public float WaitTime = 10;
             private byte Retrys = 0;
             private global::NexusFerry.State _state;
             private global::NexusDock _targetDock;
@@ -1334,7 +1357,7 @@ namespace Oxide.Plugins
                 {
                     this._targetDock = SingletonComponent<NexusDock>.Instance;
                     //Adjust travel distance
-                    _targetDock.Departure.position = _targetDock.Departure.position + (FerryPos.rotation * Vector3.forward) * plugin.ExtendFerryDistance;
+                    _targetDock.Departure.position = _targetDock.Docked.position + (FerryPos.rotation * Vector3.forward) * (100 + plugin.ExtendFerryDistance);
                     if (this._targetDock == null)
                     {
                         Debug.LogError("NexusFerry has no dock to go to!");
@@ -1388,9 +1411,9 @@ namespace Oxide.Plugins
                     }
                     SwitchToNextState();
                 }
-                if (this.MoveTowardsTarget())
+                if (MoveTowardsTarget())
                 {
-                    this.SwitchToNextState();
+                    SwitchToNextState();
                 }
             }
 
@@ -1416,20 +1439,24 @@ namespace Oxide.Plugins
 
             private void ReCheck()
             {
-                //Keep checking for incoming data for next 30 secs
-                if (plugin.HasPacket)
+                //Keep checking for incoming data for next 60 secs
+                if (!plugin.HasPacket)
                 {
                     TransferOpenNexus(true);
                     if (Retrys <= 6)
                     {
-                        Invoke(() => ReCheck(), 5f);
+                        Invoke(() => ReCheck(), 10f);
                         Retrys++;
                         return;
                     }
                 }
                 plugin.HasPacket = false;
-                //Called a 2nd time before ferry returns from ocean.
                 Retrys = 0;
+                Invoke(() => Progress(), 60f);
+            }
+
+            private void Progress()
+            {
                 this._state = NexusFerry.State.Arrival;
                 this._isTransferring = false;
             }
@@ -1446,9 +1473,7 @@ namespace Oxide.Plugins
                 {
                     if (!_isTransferring)
                     {
-                        //Send/get this ferrys items to/from hub
                         TransferOpenNexus();
-                        //30 sec delay out at ocean
                         Invoke(() => ReCheck(), 5f);
                     }
                     return;
@@ -1563,7 +1588,7 @@ namespace Oxide.Plugins
                     if (entity != null && DockedEntitys.Contains(entity))
                     {
                         //Remove item boxes that might end up on ferry when despawning things
-                        if(entity.ToString().Contains("item_drop"))
+                        if (entity.ToString().Contains("item_drop"))
                         {
                             entity.Kill();
                             continue;
@@ -1601,53 +1626,66 @@ namespace Oxide.Plugins
                     if (list.Count != 0)
                     {
                         //Create a packet to send to nexus hub
-                        Datapacket = (plugin.CreatePacket(list, FerryPos));
-                        if  (plugin.UseCompression){ Datapacket = Convert.ToBase64String(Compression.Compress(Encoding.UTF8.GetBytes(Datapacket))); } //Compress Data
+                        Datapacket = (plugin.CreatePacket(list, this));
+                        if (plugin.UseCompression) { Datapacket = Convert.ToBase64String(Compression.Compress(Encoding.UTF8.GetBytes(Datapacket))); } //Compress Data
                     }
                     this._isTransferring = true;
                 }
-                Dictionary<string, string> headers = new Dictionary<string, string> { { "Content-Length", Datapacket.Length.ToString() }, { "User-Agent", plugin.OpenNexusKey }, { "TARGET", plugin.thisserverip + ":" + plugin.thisserverport }, { "FROM", ServerIP + ":" + ServerPort } };
+                Dictionary<string, string> headers = new Dictionary<string, string> { { "Content-Length", Datapacket.Length.ToString() }, { "User-Agent", plugin.OpenNexusKey }, { "TARGET", ServerIP + "-" + ServerPort }, { "FROM", plugin.thisserverip + "-" + plugin.thisserverport } };
+                if (!recheck)
+                {
+                    headers.Add("CMD", "WRITE");
+                }
                 plugin.webrequest.Enqueue(plugin.OpenNexusHub, Datapacket, (code, response) =>
                 {
-                    if (response == null || code != 200)
+                if (response == null || code != 200)
+                {
+                    plugin.Puts("OpenNexus Hub didn't respond!");
+                    if (list.Count != 0)
                     {
-                        plugin.Puts("OpenNexus Hub didn't respond!");
-                        if (list.Count != 0)
+                        foreach (BaseEntity be in list)
                         {
-                            foreach (BaseEntity be in list)
+                            if (be is BasePlayer)
                             {
-                                if (be is BasePlayer)
+                                if (be.ToPlayer().IsConnected)
                                 {
-                                    if (be.ToPlayer().IsConnected)
-                                    {
-                                        be.ToPlayer().ChatMessage("OpenNexus Hub didn't respond!");
-                                    }
+                                    be.ToPlayer().ChatMessage("OpenNexus Hub didn't respond!");
                                 }
                             }
                         }
                     }
-                    else
+                }
+                else
+                {
+                    if (Datapacket.Length != 0 || response.Length != 0)
                     {
-                        if (Datapacket.Length != 0 || response.Length != 0)
+                        plugin.Puts("OpenNexus Sent " + String.Format("{0:0.##}", (double)(Datapacket.Length / 1024f)) + " Kb");
+                        plugin.Puts("OpenNexus Read " + String.Format("{0:0.##}", (double)(response.Length / 1024f)) + " Kb");
+                    }
+                    if (list.Count != 0)
+                    {
+                        foreach (BaseEntity be in list)
                         {
-                            plugin.Puts("OpenNexus Sent " + String.Format("{0:0.##}", (double)(Datapacket.Length / 1024f)) + " Kb");
-                            plugin.Puts("OpenNexus Read " + String.Format("{0:0.##}", (double)(response.Length / 1024f)) + " Kb");
-                        }
-                        if (list.Count != 0)
-                        {
-                            foreach (BaseEntity be in list)
+                            if (be is BasePlayer && !be.IsNpc)
                             {
-                                if (be is BasePlayer && !be.IsNpc)
+                                BasePlayer bp = be as BasePlayer;
+                                if (bp.IsConnected)
                                 {
-                                    if (be.ToPlayer().IsConnected)
-                                    {
-                                        be.ToPlayer().ChatMessage("OpenNexus Switching Server");
-                                        ConsoleNetwork.SendClientCommand(be.net.connection, "nexus.redirect", new object[]
+                                        bp.ChatMessage("OpenNexus Switching Server in 20 sec");
+                                        Invoke(() =>
                                         {
+                                            plugin.AdjustConnectionScreen(bp, "OpenNexus Switching Server");
+                                            bp.ClientRPCPlayer(null, bp, "StartLoading");
+                                            bp.SetPlayerFlag(BasePlayer.PlayerFlags.ReceivingSnapshot, true);
+                                            ConsoleNetwork.SendClientCommand(bp.net.connection, "nexus.redirect", new object[]
+                                            {
                                             ServerIP,
                                             ServerPort
-                                        });
-                                        be.ToPlayer().Kick("OpenNexus Moving Server");
+                                            });
+                                            bp.ToPlayer().Kick("OpenNexus Moving Server");
+                                            bp.Kill();
+                                        }, 20f);
+                                        continue;
                                     }
                                 }
                                 be.Kill();
@@ -1656,7 +1694,7 @@ namespace Oxide.Plugins
                         //ReadPacket from OpenNexus Hub
                         Datapacket = response;
                         if (plugin.UseCompression && plugin.IsBase64String(Datapacket)) { Datapacket = Encoding.UTF8.GetString(Compression.Uncompress(Convert.FromBase64String(Datapacket))); } //Uncompressed
-                        plugin.ReadPacket(Datapacket, FerryPos);
+                        plugin.ReadPacket(Datapacket, this);
                     }
                 }, plugin, RequestMethod.POST, headers, 10f);
             }
