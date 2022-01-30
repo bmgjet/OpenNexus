@@ -1,11 +1,23 @@
 //None of this code is to be used in any paid project/plugins
 
-//ToDo
-//Other Vechiles
+//TO DO:
+//Other Vehicles (boats,mag crain,subs,snowmobile)
 //Plugin Data
+//Settings to sync servers times, weather and maybe other stuff
+//Better paste thats paste where ever the admin calls it
+//Admin tools to view packets and stuff
+//Auto Ferry goes to island marker instead of just static distance
+//Press button on ferry for manual control
+//Re Mount players to Vehicles
+//Make sure items are returned to same slot in belt every time
+//Handle server saves better
+//Other Transition triggers then just Ferry
+//Optimise/clean up
+//Final bug checks
+
 
 //Setting Up Dock On Map
-//Make Custom Prefab group and name it SERVER=ipaddress,PORT=portnumber
+//Make Custom Prefab group and name it SERVER=ipaddress,PORT=portnumber,name
 //Make sure to tick Convert selection into group.
 //And you might want to place a safezone on it since there isnt one there by default as of AUX01
 //If you want to use NexusIsland, Place it on the very edge of the map based of its gizmo not what it looks like. Rotate it as needed
@@ -145,11 +157,7 @@ namespace Oxide.Plugins
             }
             sqlLibrary.Query(selectCommand, sqlConnection, list =>
             {
-                if (list == null)
-                {
-                    return;
-                }
-
+                if (list == null){return;}
                 foreach (Dictionary<string, object> entry in list)
                 {
                     if (entry["spawned"].ToString() != "0")
@@ -183,10 +191,7 @@ namespace Oxide.Plugins
                                         if (be != null)
                                         {
                                             TryFindEjectionPosition(out pos, player.transform.position);
-                                            if (be is BasePlayer)
-                                            {
-                                                plugin.TeleportPlayer((be as BasePlayer), pos);
-                                            }
+                                            if (be is BasePlayer){plugin.TeleportPlayer((be as BasePlayer), pos);}
                                             else
                                             {
                                                 be.SetParent(null, false, false);
@@ -223,12 +228,12 @@ namespace Oxide.Plugins
                 {
                     if (rowsAffected > 0)
                     {
-                        if (ShowDebugMsg) Puts("MySQLWrite Record Updated");
+                        if (ShowDebugMsg) { Puts("MySQLWrite Record Updated"); }
                         return;
                     }
                     else
                     {
-                        if (ShowDebugMsg) Puts("MySQLWrite Record Update Failed!");
+                        if (ShowDebugMsg) { Puts("MySQLWrite Record Update Failed!"); }
                         return;
                     }
                 });
@@ -243,12 +248,12 @@ namespace Oxide.Plugins
                 {
                     if (rowsAffected > 0)
                     {
-                        if (ShowDebugMsg) Puts("MySQLWrite New record inserted with ID: {0}", sqlConnection.LastInsertRowId);
+                        if (ShowDebugMsg) { Puts("MySQLWrite New record inserted with ID: {0}", sqlConnection.LastInsertRowId); }
                         return;
                     }
                     else
                     {
-                        if (ShowDebugMsg) Puts("MySQLWrite Failed to insert!");
+                        if (ShowDebugMsg) { Puts("MySQLWrite Failed to insert!"); }
                         return;
                     }
                 });
@@ -265,7 +270,7 @@ namespace Oxide.Plugins
             {
                 if (rowsAffected > 0)
                 {
-                    if (ShowDebugMsg) Puts("UpdateSync Record Updated");
+                    if (ShowDebugMsg) { Puts("UpdateSync Record Updated"); }
                     return;
                 }
 
@@ -276,7 +281,7 @@ namespace Oxide.Plugins
                 {
                     if (rowsAffectedwrite > 0)
                     {
-                        if (ShowDebugMsg) Puts("UpdateSync New Record inserted with ID: {0}", sqlConnection.LastInsertRowId);
+                        if (ShowDebugMsg) { Puts("UpdateSync New Record inserted with ID: {0}", sqlConnection.LastInsertRowId); }
                     }
                 });
             });
@@ -292,7 +297,7 @@ namespace Oxide.Plugins
                 if (list == null)
                 {
                     //creates new player data
-                    if (ShowDebugMsg) Puts("ReadPlayers No Player Data For  " + steamid.ToString() + " Creating It");
+                    if (ShowDebugMsg) { Puts("ReadPlayers No Player Data For  " + steamid.ToString() + " Creating It"); }
                     UpdatePlayers(Target, Target, "Playing", steamid.ToString());
                     return;
                 }
@@ -318,13 +323,13 @@ namespace Oxide.Plugins
                     //Waits for player moving
                     if (entry["state"].ToString() == "Moving")
                     {
-                        if (ShowDebugMsg) Puts("ReadPlayers Waiting for server to set player as ready " + steamid);
+                        if (ShowDebugMsg) { Puts("ReadPlayers Waiting for server to set player as ready " + steamid); }
                         return;
                     }
                     //Sets flag to move player
                     if (entry["state"].ToString() == "Ready")
                     {
-                        if (ShowDebugMsg) Puts("ReadPlayers Player Ready to move " + steamid);
+                        if (ShowDebugMsg) { Puts("ReadPlayers Player Ready to move " + steamid); }
                         MovePlayers.Add(ulong.Parse(steamid.ToString()));
                         //Sets flag back to playing
                         UpdatePlayers(Target, Target, "Playing", steamid.ToString());
@@ -333,7 +338,7 @@ namespace Oxide.Plugins
                     return;
                 }
                 //Creates new player data
-                if (ShowDebugMsg) Puts("No Player Data For  " + steamid + " Creating It");
+                if (ShowDebugMsg) { Puts("No Player Data For  " + steamid + " Creating It"); }
                 UpdatePlayers(Target, Target, "Playing", steamid.ToString());
             });
         }
@@ -349,7 +354,7 @@ namespace Oxide.Plugins
             {
                 if (rowsAffected > 0)
                 {
-                    if (ShowDebugMsg) Puts("UpdatePlayers Record Updated");
+                    if (ShowDebugMsg) { Puts("UpdatePlayers Record Updated"); }
                     Updated = true;
                     return;
                 }
@@ -361,12 +366,11 @@ namespace Oxide.Plugins
                     //Failed to update so create new
                     sqlQuery = "INSERT INTO players (`state`, `target`, `sender`,`steamid`) VALUES (@0, @1, @2, @3);";
                     Sql insertCommand = Oxide.Core.Database.Sql.Builder.Append(sqlQuery, state, target, fromaddress, steamid);
-
                     sqlLibrary.Insert(insertCommand, sqlConnection, rowsAffected =>
                     {
                         if (rowsAffected > 0)
                         {
-                            if (ShowDebugMsg) Puts("UpdatePlayers New Record inserted with ID: {0}", sqlConnection.LastInsertRowId);
+                            if (ShowDebugMsg) { Puts("UpdatePlayers New Record inserted with ID: {0}", sqlConnection.LastInsertRowId); }
                         }
                     });
                 }
@@ -641,34 +645,22 @@ namespace Oxide.Plugins
                     //Delay in these ones to allow car to be spawned
                     if (packets.Key.Contains("ModularCarEngine"))
                     {
-                        timer.Once(0.5f, () =>
-                        {
-                            ProcessModuleParts(packets.Value, SpawnedCars, 0);
-                        });
+                        timer.Once(0.5f, () =>{ProcessModuleParts(packets.Value, SpawnedCars, 0);});
                         continue;
                     }
                     if (packets.Key.Contains("ModularCarStorage"))
                     {
-                        timer.Once(0.5f, () =>
-                        {
-                            ProcessModuleParts(packets.Value, SpawnedCars, 1);
-                        });
+                        timer.Once(0.5f, () =>{ProcessModuleParts(packets.Value, SpawnedCars, 1);});
                         continue;
                     }
                     if (packets.Key.Contains("ModularCarCamper"))
                     {
-                        timer.Once(0.5f, () =>
-                        {
-                            ProcessModuleParts(packets.Value, SpawnedCars, 2);
-                        });
+                        timer.Once(0.5f, () =>{ProcessModuleParts(packets.Value, SpawnedCars, 2);});
                         continue;
                     }
                     if (packets.Key.Contains("ModularCarBags"))
                     {
-                        timer.Once(0.5f, () =>
-                        {
-                            ProcessModuleParts(packets.Value, SpawnedCars, int.Parse(packets.Key.Replace("ModularCarBags[", "").Replace("]", "")));
-                        });
+                        timer.Once(0.5f, () =>{ProcessModuleParts(packets.Value, SpawnedCars, int.Parse(packets.Key.Replace("ModularCarBags[", "").Replace("]", "")));});
                         continue;
                     }
                     if (packets.Key.Contains("ModularCar"))
@@ -1051,7 +1043,6 @@ namespace Oxide.Plugins
                                     }
                                 }
                             }
-
                             break; ;
                         case "ownerid":
                             ownerid = ii.Value;
@@ -1241,7 +1232,6 @@ namespace Oxide.Plugins
             player.transform.localPosition = pos;
             player.transform.localRotation = rot;
             player.TransformChanged();
-            //Protect player
             player.SetFlag(BaseEntity.Flags.Protected, false);
             player.SendNetworkUpdateImmediate();
             if (ShowDebugMsg) Puts("ProcessBasePlayer Setting ready flag for player to transition");
@@ -1348,7 +1338,6 @@ namespace Oxide.Plugins
                             Wmods.Add(w);
                         }
                     }
-
                     //BasePlayers items
                     BasePlayer bp = FoundEntity as BasePlayer;
                     if (bp != null)
@@ -1629,7 +1618,6 @@ namespace Oxide.Plugins
                     }
                 }
             }
-
             var itemdata = new Dictionary<string, string>
                         {
                         { "ownerid", Owner },
@@ -1831,11 +1819,10 @@ namespace Oxide.Plugins
             {
                 //setup
                 gameObject.layer = 0;
-                FerryPos = transform;
-
                 //Delay to allow for spawn
                 Invoke(() =>
                 {
+                    FerryPos = transform;
                     //Set base position of dock
                     Docked.position = FerryPos.position;
                     Docked.rotation = FerryPos.rotation;
@@ -1881,11 +1868,7 @@ namespace Oxide.Plugins
                     Die();
                     return;
                 }
-                if (!base.isServer)
-                {
-                    return;
-                }
-
+                if (!base.isServer){return;}
                 if (_state == OpenNexusFerry.State.Waiting)
                 {
                     if (_sinceStartedWaiting < plugin.WaitTime)
@@ -1895,10 +1878,7 @@ namespace Oxide.Plugins
                     }
                     SwitchToNextState();
                 }
-                if (MoveTowardsTarget())
-                {
-                    SwitchToNextState();
-                }
+                if (MoveTowardsTarget()){SwitchToNextState();}
             }
 
             //Get position to move to
@@ -1946,11 +1926,8 @@ namespace Oxide.Plugins
                 Progress();
             }
 
-            public void UpdateDockedEntitys()
-            {
-                //Load DockedEntitys with everything paranted to Ferry
-                DockedEntitys = GetFerryContents();
-            }
+            //Load DockedEntitys with everything paranted to Ferry
+            public void UpdateDockedEntitys(){DockedEntitys = GetFerryContents();}
 
 
             void SyncFerrys()
@@ -1976,20 +1953,6 @@ namespace Oxide.Plugins
                                 _state = GetNextState(_state);
                                 ServerSynced = true;
                             }, 10f);
-
-
-                            //set it to waiting
-                            //sqlQuery = "UPDATE sync SET `state` = @0 WHERE `sender` = @1 AND `target`= @2;";
-                            //selectCommand = Oxide.Core.Database.Sql.Builder.Append(sqlQuery, "Waiting", ServerIP + ":" + ServerPort, plugin.thisserverip + ":" + plugin.thisserverport);
-                            //plugin.sqlLibrary.Update(selectCommand, plugin.sqlConnection, rowsAffected =>
-                            //{
-                            //    if (rowsAffected > 0)
-                            //    {
-                            //        ServerSynced = true;
-                            //        if (plugin.ShowDebugMsg) plugin.Puts("SyncFerrys Sync frame read, moving to waiting state @ " + plugin.thisserverip + ":" + plugin.thisserverport);
-                            //        return;
-                            //    }
-                            //});
                             return;
                         }
                     }
@@ -2001,7 +1964,6 @@ namespace Oxide.Plugins
                         SyncFerrys(); 
                     }, plugin.serverdelay);
             }
-
 
             private void SwitchToNextState()
             {
