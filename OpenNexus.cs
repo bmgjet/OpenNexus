@@ -3,16 +3,12 @@
 //TO DO:
 //Other Vehicles (snowmobile)
 //Plugin Data
-//Settings to sync servers times, weather and maybe other stuff
 //Admin tools to view packets and stuff
-//Auto Ferry goes to island marker instead of just static distance
-//Press button on ferry for manual control
-//Re Mount players to Vehicles
 //Make sure items are returned to same slot in belt every time
-//Handle server saves better
 //Other Transition triggers then just Ferry
 //Optimise/clean up
 //Final bug checks
+//Fix mounting seat
 
 
 //Setting Up Dock On Map
@@ -50,6 +46,8 @@ namespace Oxide.Plugins
         string MySQLPassword = "1234";      //Password to login to mysql server (If you get password errors make sure your using mysql 5 not 8)
         public int ExtendFerryDistance = 0; //Extend how far the ferry goes before it triggers transistion
         public bool AutoDistance = false;    //Go to nearest island
+        public bool SyncTimeWeather = true; //Syncs all servers to be the same time and weather as first one that joined nexus
+        public int SyncTimeWeaterEvery = 300;  //Resyncs to first servers time/weather every seconds
 
         //Ferry Settings
         public float MoveSpeed = 10f;  //How fast it moves in the water
@@ -75,6 +73,8 @@ namespace Oxide.Plugins
         public Dictionary<Vector3, Quaternion> FoundIslands = new Dictionary<Vector3, Quaternion>();
         public List<ulong> ProcessingPlayers = new List<ulong>();
         public List<ulong> MovePlayers = new List<ulong>();
+        public Dictionary<ulong,int> SeatPlayers = new Dictionary<ulong, int>();
+        public Climate climate;
         Core.MySql.Libraries.MySql sqlLibrary = Interface.Oxide.GetLibrary<Core.MySql.Libraries.MySql>();
         Core.Database.Connection sqlConnection;
         public static OpenNexus plugin;
@@ -236,8 +236,8 @@ namespace Oxide.Plugins
         private void UpdateSync(string fromaddress, string target, string state)
         {
             //try Update
-            string sqlQuery = "UPDATE sync SET `state` = @0 WHERE `sender` = @1 AND `target` = @2;";
-            Sql updateCommand = Oxide.Core.Database.Sql.Builder.Append(sqlQuery, state, fromaddress, target);
+            string sqlQuery = "UPDATE sync SET `state` = @0, `climate` = @3 WHERE `sender` = @1 AND `target` = @2;";
+            Sql updateCommand = Oxide.Core.Database.Sql.Builder.Append(sqlQuery, state, fromaddress, target, plugin.getclimate()); ;
             sqlLibrary.Update(updateCommand, sqlConnection, rowsAffected =>
             {
                 if (rowsAffected > 0)
@@ -247,8 +247,8 @@ namespace Oxide.Plugins
                 }
 
                 //Update failed so do insert
-                sqlQuery = "INSERT INTO sync (`state`, `sender`, `target`) VALUES (@0, @1, @2);";
-                Sql insertCommand = Oxide.Core.Database.Sql.Builder.Append(sqlQuery, state, fromaddress, target);
+                sqlQuery = "INSERT INTO sync (`state`, `sender`, `target`, `climate`) VALUES (@0, @1, @2, @3);";
+                Sql insertCommand = Oxide.Core.Database.Sql.Builder.Append(sqlQuery, state, fromaddress, target, plugin.getclimate());
                 sqlLibrary.Insert(insertCommand, sqlConnection, rowsAffectedwrite =>
                 {
                     if (rowsAffectedwrite > 0)
@@ -369,7 +369,7 @@ namespace Oxide.Plugins
         private void CreatesTables()
         {
             sqlLibrary.Insert(Core.Database.Sql.Builder.Append("CREATE TABLE IF NOT EXISTS `packets` (`id` int(11) unsigned NOT NULL AUTO_INCREMENT, `spawned` int(1) NOT NULL,`timestamp` varchar(64) NOT NULL,`target` varchar(21),`sender` varchar(21),`data` text, PRIMARY KEY (`id`)) DEFAULT CHARSET=utf8;"), sqlConnection);
-            sqlLibrary.Insert(Core.Database.Sql.Builder.Append("CREATE TABLE IF NOT EXISTS `sync` (`id` int(11) unsigned NOT NULL AUTO_INCREMENT,`sender` varchar(21),`target` varchar(21),`state` varchar(21), PRIMARY KEY (`id`)) DEFAULT CHARSET=utf8;"), sqlConnection);
+            sqlLibrary.Insert(Core.Database.Sql.Builder.Append("CREATE TABLE IF NOT EXISTS `sync` (`id` int(11) unsigned NOT NULL AUTO_INCREMENT,`sender` varchar(21),`target` varchar(21),`state` varchar(21),`climate` text, PRIMARY KEY (`id`)) DEFAULT CHARSET=utf8;"), sqlConnection);
             sqlLibrary.Insert(Core.Database.Sql.Builder.Append("CREATE TABLE IF NOT EXISTS `players` (`id` int(11) unsigned NOT NULL AUTO_INCREMENT,`sender` varchar(21),`target` varchar(21),`state` varchar(21),`steamid` varchar(21), PRIMARY KEY (`id`)) DEFAULT CHARSET=utf8;"), sqlConnection);
         }
 
@@ -384,6 +384,9 @@ namespace Oxide.Plugins
         {
             //Connect to database
             ConnectToMysql(MySQLHost, MySQLPort, MySQLDB, MySQLUsername, MySQLPassword);
+            //Get Weather data
+            climate = SingletonComponent<global::Climate>.Instance;
+            timer.Every(SyncTimeWeaterEvery, () => setclimate());
             if (initial)
             {
                 //First start up so delay for everything to be spawned
@@ -526,16 +529,63 @@ namespace Oxide.Plugins
             ReadPlayers(thisserverip + ":" + thisserverport, connection.ownerid, connection);
         }
 
+        private void OnPlayerSleepEnded(BasePlayer player)
+        {
+            //Mount players that were mounted.
+            if (SeatPlayers.ContainsKey(player.userID))
+            {
+                MountPlayer(player,SeatPlayers[player.userID]);
+                SeatPlayers.Remove(player.userID);
+            }
+            //Remove transfere protection
+            player.SetFlag(BaseEntity.Flags.Protected, false);
+        }
+
+        public void MountPlayer(BasePlayer player, int seatnum)
+        {
+            //Try mount seat given in setting
+            List<BaseVehicle> bv = new List<BaseVehicle>();
+            Vis.Entities<BaseVehicle>(player.transform.position, 1f, bv);
+            try
+            {
+                foreach (BaseVehicle seat in bv)
+                {
+                    seat.GetMountPoint(seatnum).mountable.AttemptMount(player, false);
+                    return;
+                }
+            }
+            catch { }
+            //Fall back to find nearest seat and mount
+            List<BaseMountable> Seats = new List<BaseMountable>();
+            Vis.Entities<BaseMountable>(player.transform.position, 0.5f, Seats);
+            BaseMountable closest_seat = null;
+            foreach (BaseMountable seat in Seats)
+            {
+                if (seat.HasFlag(BaseEntity.Flags.Busy)) continue;
+                if (closest_seat == null) closest_seat = seat;
+                if (Vector3.Distance(player.transform.position, seat.transform.position) <= Vector3.Distance(player.transform.position, closest_seat.transform.position))
+                    closest_seat = seat;
+            }
+            //Trys to mount seat
+            if (closest_seat != null)
+            {
+                closest_seat.GetComponent<BaseMountable>().AttemptMount(player);
+                closest_seat.SendNetworkUpdateImmediate();
+                player.SendNetworkUpdateImmediate();
+            }
+        }
+
         private void Unload()
         {
             //Remove any NexusFerrys
             foreach (var basenetworkable in BaseNetworkable.serverEntities)
             {
+                //Freeze compiler some times
                 //Destroy island
-                if (basenetworkable.prefabID == 2795004596)
-                {
-                    basenetworkable.Kill();
-                }
+                //if (basenetworkable.prefabID == 2795004596)
+                //{
+                //    basenetworkable.Kill();
+                //}
                 //Distroy ferry
                 if (basenetworkable.prefabID == 2508295857)
                 {
@@ -580,6 +630,125 @@ namespace Oxide.Plugins
             plugin = null;
         }
 
+        private string getclimate()
+        {
+            //Build database of current time/weather
+            string current = "";
+            current += (TOD_Sky.Instance.Cycle.Year) + "|";
+            current += (TOD_Sky.Instance.Cycle.Month) + "|";
+            current += (TOD_Sky.Instance.Cycle.Day) + "|";
+            current += (TOD_Sky.Instance.Cycle.Hour) + "|";
+            current += (climate.WeatherState.Atmosphere.Brightness.ToString()) + "|";
+            current += (climate.WeatherState.Atmosphere.Contrast.ToString()) + "|";
+            current += (climate.WeatherState.Atmosphere.Directionality.ToString()) + "|";
+            current += (climate.WeatherState.Atmosphere.MieMultiplier.ToString()) + "|";
+            current += (climate.WeatherState.Atmosphere.RayleighMultiplier.ToString()) + "|";
+            current += (climate.WeatherState.Clouds.Attenuation.ToString()) + "|";
+            current += (climate.WeatherState.Clouds.Brightness.ToString()) + "|";
+            current += (climate.WeatherState.Clouds.Coloring.ToString()) + "|";
+            current += (climate.WeatherState.Clouds.Coverage.ToString()) + "|";
+            current += (climate.WeatherState.Clouds.Opacity.ToString()) + "|";
+            current += (climate.WeatherState.Clouds.Saturation.ToString()) + "|";
+            current += (climate.WeatherState.Clouds.Scattering.ToString()) + "|";
+            current += (climate.WeatherState.Clouds.Sharpness.ToString()) + "|";
+            current += (climate.WeatherState.Clouds.Size.ToString()) + "|";
+            current += (climate.Weather.DustChance.ToString()) + "|";
+            current += (climate.WeatherState.Atmosphere.Fogginess.ToString()) + "|";
+            current += (climate.Weather.FogChance.ToString()) + "|";
+            current += (climate.Weather.OvercastChance.ToString()) + "|";
+            current += (climate.WeatherState.Rain.ToString()) + "|";
+            current += (climate.Weather.RainChance.ToString()) + "|";
+            current += (climate.WeatherState.Rainbow.ToString()) + "|";
+            current += (climate.Weather.StormChance.ToString()) + "|";
+            current += (climate.WeatherState.Thunder.ToString()) + "|";
+            current += (climate.WeatherState.Wind.ToString()) + "|";
+            return current;
+        }
+
+        private void setclimate()
+        {
+            //Load from database time/weather from the first server in list.
+            string sqlQuery = "SELECT `sender`, `climate` FROM sync LIMIT 1";
+            Sql selectCommand = Oxide.Core.Database.Sql.Builder.Append(sqlQuery);
+            sqlLibrary.Query(selectCommand, sqlConnection, list =>
+            {
+                if (list == null){return;}
+                foreach (Dictionary<string, object> entry in list)
+                {
+                    if(entry["sender"].ToString() == thisserverip+":"+thisserverport)
+                    {
+                        if (ShowDebugMsg) Puts("Dont Sync Weather/Time this is first server");
+                        return;
+                    }
+                    string[] settings = entry["climate"].ToString().Split('|');
+                    TOD_Sky.Instance.Cycle.Year = int.Parse(settings[0]);
+                    TOD_Sky.Instance.Cycle.Month = int.Parse(settings[1]);
+                    TOD_Sky.Instance.Cycle.Day = int.Parse(settings[2]);
+                    TOD_Sky.Instance.Cycle.Hour = float.Parse(settings[3]);
+                    climate.WeatherState.Atmosphere.Brightness = float.Parse(settings[4]);
+                    climate.WeatherState.Atmosphere.Contrast = float.Parse(settings[5]);
+                    climate.WeatherState.Atmosphere.Directionality = float.Parse(settings[6]);
+                    climate.WeatherState.Atmosphere.MieMultiplier = float.Parse(settings[7]);
+                    climate.WeatherState.Atmosphere.RayleighMultiplier = float.Parse(settings[8]);
+                    climate.WeatherState.Clouds.Attenuation = float.Parse(settings[9]);
+                    climate.WeatherState.Clouds.Brightness = float.Parse(settings[10]);
+                    climate.WeatherState.Clouds.Coloring = float.Parse(settings[11]);
+                    climate.WeatherState.Clouds.Coverage = float.Parse(settings[12]);
+                    climate.WeatherState.Clouds.Opacity = float.Parse(settings[13]);
+                    climate.WeatherState.Clouds.Saturation = float.Parse(settings[14]);
+                    climate.WeatherState.Clouds.Scattering = float.Parse(settings[15]);
+                    climate.WeatherState.Clouds.Sharpness = float.Parse(settings[16]);
+                    climate.WeatherState.Clouds.Size = float.Parse(settings[17]);
+                    climate.Weather.DustChance = float.Parse(settings[18]);
+                    climate.WeatherState.Atmosphere.Fogginess = float.Parse(settings[19]);
+                    climate.Weather.FogChance = float.Parse(settings[20]);
+                    climate.Weather.OvercastChance = float.Parse(settings[21]);
+                    climate.WeatherState.Rain= float.Parse(settings[22]);
+                    climate.Weather.RainChance = float.Parse(settings[23]);
+                    climate.WeatherState.Rainbow = float.Parse(settings[24]);
+                    climate.Weather.StormChance = float.Parse(settings[25]);
+                    climate.WeatherState.Thunder = float.Parse(settings[26]);
+                    climate.WeatherState.Wind = float.Parse(settings[27]);
+                    if (ShowDebugMsg) Puts("Sync Weather/Time with first server");
+                    return;
+                }
+            });
+        }
+
+        private string getblueprints(BasePlayer player)
+        {
+            string bps = "";
+            if (player != null)
+            {
+                foreach (var blueprint in player.PersistantPlayerInfo.unlockedItems)
+                {
+                    bps += blueprint + "|";
+                }
+            }
+            return bps;
+        }
+
+        private void setblueprints(BasePlayer player, string[] blueprints)
+        {
+            if (player != null && blueprints != null && blueprints.Length != 0)
+            {
+                foreach (string blueprint in blueprints)
+                {
+                    try
+                    {
+                        int bp = int.Parse(blueprint);
+                        if (!player.PersistantPlayerInfo.unlockedItems.Contains(int.Parse(blueprint)))
+                        {
+                            player.PersistantPlayerInfo.unlockedItems.Add(int.Parse(blueprint));
+                        }
+                    }
+                    catch { }
+                }
+                player.SendNetworkUpdateImmediate();
+                player.ClientRPCPlayer(null, player, "UnlockedBlueprint", 0);
+            }
+        }
+
         private void SetupFuel(BaseVehicle target, int amount)
         {
             //Apply fuel ammount
@@ -616,8 +785,9 @@ namespace Oxide.Plugins
             public string name = "";
             public float hydration = 0;
             public float calories = 0;
-            public string mounted = "0";
+            public bool mounted = false;
             public int seat = 0;
+            public string[] blueprints = new string[0];
 
             public void ProcessPacket(List<Dictionary<string, string>> packets)
             {
@@ -684,11 +854,18 @@ namespace Oxide.Plugins
                             case "calories":
                                 calories = float.Parse(ii.Value);
                                 break;
-                            case "mounted":
-                                mounted = ii.Value;
+                            case "blueprints":
+                                blueprints = ii.Value.Split('|');
                                 break;
                             case "seat":
                                 seat = int.Parse(ii.Value);
+                                break;
+                            case "mounted":
+                                mounted = (ii.Value.ToLower().Contains("true"));
+                                if (!plugin.SeatPlayers.ContainsKey(ulong.Parse(steamid)))
+                                {
+                                    plugin.SeatPlayers.Add(ulong.Parse(steamid), seat);
+                                }
                                 break;
                         }
                     }
@@ -1225,6 +1402,7 @@ namespace Oxide.Plugins
             player = GameManager.server.CreateEntity("assets/prefabs/player/player.prefab", FerryPos.transform.position, FerryPos.transform.rotation, true).ToPlayer();
             player.lifestate = BaseCombatEntity.LifeState.Dead;
             player.ResetLifeStateOnSpawn = true;
+            player.SetFlag(BaseEntity.Flags.Protected, true);
             player.Spawn();
             StartSleeping(player);
             player.CancelInvoke(player.KillMessage);
@@ -1243,7 +1421,7 @@ namespace Oxide.Plugins
             player.transform.localPosition = settings.pos;
             player.transform.localRotation = settings.rot;
             player.TransformChanged();
-            player.SetFlag(BaseEntity.Flags.Protected, false);
+            setblueprints(player, settings.blueprints);
             player.SendNetworkUpdateImmediate();
             if (ShowDebugMsg) Puts("ProcessBasePlayer Setting ready flag for player to transition");
             plugin.UpdatePlayers(plugin.thisserverip + ":" + plugin.thisserverport, plugin.thisserverip + ":" + plugin.thisserverport, "Ready", settings.steamid.ToString());
@@ -1465,6 +1643,10 @@ namespace Oxide.Plugins
                     {
                         data.Add("BasePlayerInventory[" + baseplayer.UserIDString + "]", itemlist);
                     }
+                    //Show Open Nexus Screen
+                    plugin.AdjustConnectionScreen(baseplayer, "Open Nexus Transfering Data",10);
+                    baseplayer.ClientRPCPlayer(null, baseplayer, "StartLoading");
+                    baseplayer.SetPlayerFlag(BasePlayer.PlayerFlags.ReceivingSnapshot, false);
                 }
                 //Create a horse packet
                 RidableHorse horse = entity as RidableHorse;
@@ -1703,13 +1885,11 @@ namespace Oxide.Plugins
         public Dictionary<string, string> basePlayer(BasePlayer baseplayer, BaseEntity FerryPos)
         {
             //baseplayer packet
-            uint mounted = 0;
             int seat = 0;
             BaseVehicle bv = baseplayer.GetMountedVehicle();
             if (bv != null)
             {
                 seat = bv.GetPlayerSeat(baseplayer);
-                mounted = bv.net.ID;
             }
             var itemdata = new Dictionary<string, string>
                         {
@@ -1721,8 +1901,10 @@ namespace Oxide.Plugins
                         { "maxhealth", baseplayer._maxHealth.ToString() },
                         { "hydration", baseplayer.metabolism.hydration.value.ToString() },
                         { "calories", baseplayer.metabolism.calories.value.ToString() },
-                        { "mounted", mounted.ToString() },
-                        { "seat", seat.ToString() }
+                        { "blueprints", getblueprints(baseplayer) },
+                        { "seat", seat.ToString() },
+                        { "mounted", baseplayer.isMounted.ToString() }
+
                         };
             return itemdata;
         }
