@@ -1,15 +1,11 @@
 //None of this code is to be used in any paid project/plugins
 
 //TO DO:
-//Other Vehicles (snowmobile)
 //Plugin Data
 //Admin tools to view packets and stuff
 //Make sure items are returned to same slot in belt every time
-//Other Transition triggers then just Ferry
 //Optimise/clean up
 //Final bug checks
-//Fix mounting seat
-
 
 //Setting Up Dock On Map
 //Make Custom Prefab group and name it SERVER=ipaddress,PORT=portnumber,name
@@ -38,30 +34,31 @@ namespace Oxide.Plugins
     public class OpenNexus : RustPlugin
     {
         //Main Settings
-        float serverdelay = 2f; //How long between mysql requests leave atleast 500ms (0.5) when used with local server
-        string MySQLHost = "localhost"; //IP address of mysql server
-        int MySQLPort = 3306;           //Port of mysql server
-        string MySQLDB = "OpenNexus";   //Database to use
-        string MySQLUsername = "OpenNexus"; //Username to login to mysql server
-        string MySQLPassword = "1234";      //Password to login to mysql server (If you get password errors make sure your using mysql 5 not 8)
-        public int ExtendFerryDistance = 0; //Extend how far the ferry goes before it triggers transistion
-        public bool AutoDistance = false;    //Go to nearest island
-        public bool SyncTimeWeather = true; //Syncs all servers to be the same time and weather as first one that joined nexus
+        float serverdelay = 1f;                //How long between mysql requests leave atleast 2 when used with local server
+        string MySQLHost = "localhost";        //IP address of mysql server
+        int MySQLPort = 3306;                  //Port of mysql server
+        string MySQLDB = "OpenNexus";          //Database to use
+        string MySQLUsername = "OpenNexus";    //Username to login to mysql server
+        string MySQLPassword = "1234";         //Password to login to mysql server (If you get password errors make sure your using mysql 5 not 8)
+        public int ExtendFerryDistance = 0;    //Extend how far the ferry goes before it triggers transistion
+        public bool AutoDistance = false;      //Go to nearest island
+        public bool SyncTimeWeather = true;    //Syncs all servers to be the same time and weather as first one that joined nexus
         public int SyncTimeWeaterEvery = 300;  //Resyncs to first servers time/weather every seconds
+        public bool EdgeTeleporter = true;     //If any BaseVehicle hit edge of server they will teleport back to other side to stop them dying. 
 
         //Ferry Settings
-        public float MoveSpeed = 10f;  //How fast it moves in the water
-        public float TurnSpeed = 0.6f; //How fast it can spin around
-        public float WaitTime = 60; //How long it waits at dock before leaving
-        public int TransfereTime = 60; //Max time it waits out at ocean for a transfer
-        public int ProgressDelay = 30; //Extra time it waits after transfere for players to spawn on it
-        public int RedirectDelay = 5;  //How long after getting ready flag before it sends user to the next server
+        public float MoveSpeed = 10f;           //How fast it moves in the water
+        public float TurnSpeed = 0.6f;          //How fast it can spin around
+        public float WaitTime = 60;             //How long it waits at dock before leaving
+        public int TransfereTime = 60;          //Max time it waits out at ocean for a transfer
+        public int ProgressDelay = 30;          //Extra time it waits after transfere for players to spawn on it
+        public int RedirectDelay = 5;           //How long after getting ready flag before it sends user to the next server
 
         //Advanced Settings
-        public string thisserverip = ""; //Over-ride auto detected ip
-        public string thisserverport = ""; //Over-ride auto detected port
-        public bool UseCompression = true; //Compress Data Packets (Recommended since it 1/4 the size of the data)
-        public bool ShowDebugMsg = true; //Outputs info to console
+        public string thisserverip = "";        //Over-ride auto detected ip
+        public string thisserverport = "";      //Over-ride auto detected port
+        public bool UseCompression = true;      //Compress Data Packets (Recommended since it 1/4 the size of the data)
+        public bool ShowDebugMsg = true;        //Outputs info to console
         //End Settings
         private static readonly string permbypass = "OpenNexus.bypass"; //bypass the single server at a time limit
         private static readonly string permadmin = "OpenNexus.admin"; //Allows to use admin commands
@@ -73,11 +70,13 @@ namespace Oxide.Plugins
         public Dictionary<Vector3, Quaternion> FoundIslands = new Dictionary<Vector3, Quaternion>();
         public List<ulong> ProcessingPlayers = new List<ulong>();
         public List<ulong> MovePlayers = new List<ulong>();
-        public Dictionary<ulong,int> SeatPlayers = new Dictionary<ulong, int>();
+        public Dictionary<ulong, int> SeatPlayers = new Dictionary<ulong, int>();
         public Climate climate;
+        public List<BaseNetworkable> unloadable = new List<BaseNetworkable>();
+        public static OpenNexus plugin;
+        //MySQL
         Core.MySql.Libraries.MySql sqlLibrary = Interface.Oxide.GetLibrary<Core.MySql.Libraries.MySql>();
         Core.Database.Connection sqlConnection;
-        public static OpenNexus plugin;
 
         [ChatCommand("OpenNexus.Paste")]
         private void cmdPaste(BasePlayer player, string command, string[] args)
@@ -96,7 +95,7 @@ namespace Oxide.Plugins
             player.ChatMessage("Pasting Packet " + args[0]);
 
             //Do Read Of Packet
-            MySQLRead("", null, packetid,player);
+            MySQLRead("", null, packetid, player);
         }
 
         [ConsoleCommand("OpenNexus.Resync")]
@@ -114,7 +113,7 @@ namespace Oxide.Plugins
         private void cmdReset(ConsoleSystem.Arg arg)
         {
             //Resets database tables
-            if(!arg.IsAdmin) { return; }
+            if (!arg.IsAdmin) { return; }
 
             string sqlQuery = "DROP TABLE IF EXISTS  players, packets, sync;";
             Sql deleteCommand = Oxide.Core.Database.Sql.Builder.Append(sqlQuery);
@@ -125,8 +124,8 @@ namespace Oxide.Plugins
                  CreatesTables();
                  timer.Once(1f, () =>
                   {
-                     //Reset players data
-                     foreach (BasePlayer bp in BasePlayer.activePlayerList)
+                      //Reset players data
+                      foreach (BasePlayer bp in BasePlayer.activePlayerList)
                       {
                           if (bp.IsConnected && !bp.IsNpc)
                           {
@@ -158,7 +157,7 @@ namespace Oxide.Plugins
             }
             sqlLibrary.Query(selectCommand, sqlConnection, list =>
             {
-                if (list == null){return;}
+                if (list == null) { return; }
                 foreach (Dictionary<string, object> entry in list)
                 {
                     if (entry["spawned"].ToString() != "0")
@@ -172,7 +171,7 @@ namespace Oxide.Plugins
                     int id = int.Parse(entry["id"].ToString());
                     string data = "";
                     if (UseCompression) { data = Encoding.UTF8.GetString(Compression.Uncompress(Convert.FromBase64String(entry["data"].ToString()))); } //compressed
-                    else{data = entry["data"].ToString();}
+                    else { data = entry["data"].ToString(); }
                     //Admin command
                     if (player != null)
                     {
@@ -277,19 +276,12 @@ namespace Oxide.Plugins
                 foreach (Dictionary<string, object> entry in list)
                 {
                     //Redirect player to last server they were in.
-                    if (entry["target"].ToString() != thisserverip+":"+thisserverport && entry["state"].ToString() != "Moving" && entry["state"].ToString() != "Ready" && connection != null)
+                    if (entry["target"].ToString() != thisserverip + ":" + thisserverport && entry["state"].ToString() != "Moving" && entry["state"].ToString() != "Ready" && connection != null)
                     {
-                        if(BasePlayer.FindByID(steamid).IPlayer.HasPermission(permbypass))
-                        {
-                            return;
-                        }
+                        if (BasePlayer.FindByID(steamid).IPlayer.HasPermission(permbypass)) { return; }
                         string[] server = entry["target"].ToString().Split(':');
                         if (ShowDebugMsg) Puts("ReadPlayers Redirecting  " + steamid);
-                        ConsoleNetwork.SendClientCommand(connection, "nexus.redirect", new object[]
-                                    {
-                                                server[0],
-                                                server[1]
-                                    });
+                        ConsoleNetwork.SendClientCommand(connection, "nexus.redirect", new object[] { server[0], server[1] });
                         return;
                     }
                     //Waits for player moving
@@ -368,14 +360,15 @@ namespace Oxide.Plugins
 
         private void CreatesTables()
         {
+            //Setup tables if they dont exsist
             sqlLibrary.Insert(Core.Database.Sql.Builder.Append("CREATE TABLE IF NOT EXISTS `packets` (`id` int(11) unsigned NOT NULL AUTO_INCREMENT, `spawned` int(1) NOT NULL,`timestamp` varchar(64) NOT NULL,`target` varchar(21),`sender` varchar(21),`data` text, PRIMARY KEY (`id`)) DEFAULT CHARSET=utf8;"), sqlConnection);
             sqlLibrary.Insert(Core.Database.Sql.Builder.Append("CREATE TABLE IF NOT EXISTS `sync` (`id` int(11) unsigned NOT NULL AUTO_INCREMENT,`sender` varchar(21),`target` varchar(21),`state` varchar(21),`climate` text, PRIMARY KEY (`id`)) DEFAULT CHARSET=utf8;"), sqlConnection);
             sqlLibrary.Insert(Core.Database.Sql.Builder.Append("CREATE TABLE IF NOT EXISTS `players` (`id` int(11) unsigned NOT NULL AUTO_INCREMENT,`sender` varchar(21),`target` varchar(21),`state` varchar(21),`steamid` varchar(21), PRIMARY KEY (`id`)) DEFAULT CHARSET=utf8;"), sqlConnection);
         }
 
-        //Set up permissions
         private void Init()
         {
+            //Set up permissions
             permission.RegisterPermission(permadmin, this);
             permission.RegisterPermission(permbypass, this);
         }
@@ -386,7 +379,11 @@ namespace Oxide.Plugins
             ConnectToMysql(MySQLHost, MySQLPort, MySQLDB, MySQLUsername, MySQLPassword);
             //Get Weather data
             climate = SingletonComponent<global::Climate>.Instance;
-            timer.Every(SyncTimeWeaterEvery, () => setclimate());
+            plugin = this;
+            if (SyncTimeWeather)
+            {
+                timer.Every(SyncTimeWeaterEvery, () => setclimate());
+            }
             if (initial)
             {
                 //First start up so delay for everything to be spawned
@@ -424,8 +421,6 @@ namespace Oxide.Plugins
             //Find this servers IP and Port if not manually set
             if (thisserverip == "") thisserverip = covalence.Server.Address.ToString();
             if (thisserverport == "") thisserverport = covalence.Server.Port.ToString();
-            plugin = this;
-
             //Scan map prefabs
             foreach (PrefabData prefabdata in World.Serialization.world.prefabs)
             {
@@ -451,8 +446,7 @@ namespace Oxide.Plugins
                     if (ferry == null) continue;
                     //Attach open nexus code
                     OpenNexusFerry OpenFerry = ferry.gameObject.AddComponent<OpenNexusFerry>();
-                    OpenFerry.DockPos = new Vector3(prefabdata.position.x, prefabdata.position.y, prefabdata.position.z);
-                    OpenFerry.DockRot = rotation;
+                    if (OpenFerry == null) continue;
                     //Setup with setting in dock prefab name
                     foreach (string setting in FerrySettings)
                     {
@@ -477,7 +471,7 @@ namespace Oxide.Plugins
                     UnityEngine.Object.DestroyImmediate(ferry);
                     OpenFerry.enableSaving = false;
                     OpenFerry.Spawn();
-                    UnityEngine.Object.Destroy(OpenFerry.GetComponent<SavePause>());
+                    unloadable.Add(OpenFerry);
                 }
                 //Find NexusIslands
                 if (prefabdata.id == 2795004596)
@@ -494,13 +488,25 @@ namespace Oxide.Plugins
                     UnityEngine.Object.DestroyImmediate(island);
                     openNexusIsland.enableSaving = false;
                     openNexusIsland.Spawn();
-                    UnityEngine.Object.Destroy(openNexusIsland.GetComponent<SavePause>());
                     if (!FoundIslands.ContainsKey(position))
-                        {
+                    {
                         FoundIslands.Add(position, rotation);
+                        unloadable.Add(openNexusIsland);
                         Puts("Found Island");
                     }
                 }
+            }
+            //Add edge teleport
+            if (EdgeTeleporter) { foreach (BaseNetworkable vehicle in BaseNetworkable.serverEntities) { if (vehicle is BaseVehicle && vehicle.GetComponent<EdgeTeleport>() == null) vehicle.gameObject.AddComponent<EdgeTeleport>(); } }
+        }
+
+        private void OnEntitySpawned(BaseEntity baseEntity)
+        {
+            //Add edge teleport
+            if (EdgeTeleporter)
+            {
+                BaseVehicle vehicle = baseEntity as BaseVehicle;
+                if (vehicle != null) if (vehicle.GetComponent<EdgeTeleport>() == null) { vehicle.gameObject.AddComponent<EdgeTeleport>(); return; }
             }
         }
 
@@ -534,7 +540,7 @@ namespace Oxide.Plugins
             //Mount players that were mounted.
             if (SeatPlayers.ContainsKey(player.userID))
             {
-                MountPlayer(player,SeatPlayers[player.userID]);
+                MountPlayer(player, SeatPlayers[player.userID]);
                 SeatPlayers.Remove(player.userID);
             }
             //Remove transfere protection
@@ -577,15 +583,15 @@ namespace Oxide.Plugins
 
         private void Unload()
         {
-            //Remove any NexusFerrys
-            foreach (var basenetworkable in BaseNetworkable.serverEntities)
+            //Remove plugin created stuff.
+            foreach (BaseNetworkable basenetworkable in unloadable)
             {
                 //Freeze compiler some times
                 //Destroy island
-                //if (basenetworkable.prefabID == 2795004596)
-                //{
-                //    basenetworkable.Kill();
-                //}
+                if (basenetworkable.prefabID == 2795004596)
+                {
+                    basenetworkable.Kill();
+                }
                 //Distroy ferry
                 if (basenetworkable.prefabID == 2508295857)
                 {
@@ -593,10 +599,10 @@ namespace Oxide.Plugins
                     OpenNexusFerry Ferry = basenetworkable as OpenNexusFerry;
                     if (Ferry != null)
                     {
-                        try
+                        //Dissconnect database and set sync state as offline
+                        if (sqlConnection != null && sqlConnection.Con != null)
                         {
-                            //Dissconnect database and set sync state as offline
-                            if (sqlConnection != null && sqlConnection.Con != null)
+                            NextTick(() =>
                             {
                                 try
                                 {
@@ -604,27 +610,35 @@ namespace Oxide.Plugins
                                     sqlLibrary.CloseDb(sqlConnection);
                                 }
                                 catch { }
-                            }
-                            //Updates ferry contents list and ejects it to dock.
-                            Ferry.UpdateDockedEntitys();
-                            EjectEntitys(Ferry.GetFerryContents(), Ferry.DockedEntitys, Ferry.EjectionZone.position);
-                            //Destroys Transform objects
-                            UnityEngine.Object.Destroy(Ferry.Arrival.gameObject);
-                            UnityEngine.Object.Destroy(Ferry.CastingOff.gameObject);
-                            UnityEngine.Object.Destroy(Ferry.Departure.gameObject);
-                            UnityEngine.Object.Destroy(Ferry.Docked.gameObject);
-                            UnityEngine.Object.Destroy(Ferry.Docking.gameObject);
-                            UnityEngine.Object.Destroy(Ferry.EjectionZone.gameObject);
-
+                            });
                         }
-                        catch { }
+                        //Updates ferry contents list and ejects it to dock.
+                        Ferry.UpdateDockedEntitys();
+                        EjectEntitys(Ferry.GetFerryContents(), Ferry.DockedEntitys, Ferry.EjectionZone.position);
+                        //Destroys Transform objects
+                        UnityEngine.Object.Destroy(Ferry.Arrival.gameObject);
+                        UnityEngine.Object.Destroy(Ferry.CastingOff.gameObject);
+                        UnityEngine.Object.Destroy(Ferry.Departure.gameObject);
+                        UnityEngine.Object.Destroy(Ferry.Docked.gameObject);
+                        UnityEngine.Object.Destroy(Ferry.Docking.gameObject);
+                        UnityEngine.Object.Destroy(Ferry.EjectionZone.gameObject);
+                        Ferry.Kill();
                     }
-                    try
+                }
+            }
+            //Edge teleport
+            if (EdgeTeleporter)
+            {
+                foreach (BaseNetworkable vehicle in BaseNetworkable.serverEntities)
+                {
+                    if (vehicle is BaseVehicle)
                     {
-                        //Kill the ferry
-                        basenetworkable.Kill();
+                        EdgeTeleport et = vehicle.GetComponent<EdgeTeleport>();
+                        if (et != null)
+                        {
+                            UnityEngine.Object.Destroy(et);
+                        }
                     }
-                    catch { }
                 }
             }
             plugin = null;
@@ -672,10 +686,10 @@ namespace Oxide.Plugins
             Sql selectCommand = Oxide.Core.Database.Sql.Builder.Append(sqlQuery);
             sqlLibrary.Query(selectCommand, sqlConnection, list =>
             {
-                if (list == null){return;}
+                if (list == null) { return; }
                 foreach (Dictionary<string, object> entry in list)
                 {
-                    if(entry["sender"].ToString() == thisserverip+":"+thisserverport)
+                    if (entry["sender"].ToString() == thisserverip + ":" + thisserverport)
                     {
                         if (ShowDebugMsg) Puts("Dont Sync Weather/Time this is first server");
                         return;
@@ -703,7 +717,7 @@ namespace Oxide.Plugins
                     climate.WeatherState.Atmosphere.Fogginess = float.Parse(settings[19]);
                     climate.Weather.FogChance = float.Parse(settings[20]);
                     climate.Weather.OvercastChance = float.Parse(settings[21]);
-                    climate.WeatherState.Rain= float.Parse(settings[22]);
+                    climate.WeatherState.Rain = float.Parse(settings[22]);
                     climate.Weather.RainChance = float.Parse(settings[23]);
                     climate.WeatherState.Rainbow = float.Parse(settings[24]);
                     climate.Weather.StormChance = float.Parse(settings[25]);
@@ -715,8 +729,76 @@ namespace Oxide.Plugins
             });
         }
 
+        private string getmodifiers(BasePlayer player)
+        {
+            //Build database of players current modifiers
+            string mods = "";
+            if (player != null)
+            {
+                foreach (Modifier m in player.modifiers.All)
+                {
+                    mods += (m.Type.ToString()) + ",";
+                    mods += (m.Source.ToString()) + ",";
+                    mods += (m.Value.ToString()) + ",";
+                    mods += (m.Duration.ToString()) + ",";
+                    mods += (m.TimeRemaining.ToString()) + "|";
+                }
+            }
+            return mods;
+        }
+
+        private void setmodifiers(BasePlayer player, string[] mods)
+        {
+            //Read from database players modifiers
+            if (player != null && mods != null && mods.Length != 0)
+            {
+                List<ModifierDefintion> md = new List<ModifierDefintion>();
+                foreach (string mod in mods)
+                {
+                    try
+                    {
+                        string[] m = mod.Split(',');
+                        if (m.Length == 5)
+                        {
+                            ModifierDefintion moddef = new ModifierDefintion();
+
+                            switch (m[0])
+                            {
+                                case "Wood_Yield":
+                                    moddef.type = Modifier.ModifierType.Wood_Yield;
+                                    break;
+                                case "Ore_Yield":
+                                    moddef.type = Modifier.ModifierType.Ore_Yield;
+                                    break;
+                                case "Radiation_Resistance":
+                                    moddef.type = Modifier.ModifierType.Radiation_Resistance;
+                                    break;
+                                case "Radiation_Exposure_Resistance":
+                                    moddef.type = Modifier.ModifierType.Radiation_Exposure_Resistance;
+                                    break;
+                                case "Max_Health":
+                                    moddef.type = Modifier.ModifierType.Max_Health;
+                                    break;
+                                case "Scrap_Yield":
+                                    moddef.type = Modifier.ModifierType.Scrap_Yield;
+                                    break;
+                            }
+                            moddef.source = Modifier.ModifierSource.Tea;
+                            moddef.duration = float.Parse(m[4]);
+                            moddef.value = float.Parse(m[2]);
+                            md.Add(moddef);
+                        }
+                    }
+                    catch { }
+                }
+                player.modifiers.Add(md);
+                player.DirtyPlayerState();
+            }
+        }
+
         private string getblueprints(BasePlayer player)
         {
+            //Build data base al players unloacked blueprints
             string bps = "";
             if (player != null)
             {
@@ -730,6 +812,7 @@ namespace Oxide.Plugins
 
         private void setblueprints(BasePlayer player, string[] blueprints)
         {
+            //Apply unlocked blueprints to player from database
             if (player != null && blueprints != null && blueprints.Length != 0)
             {
                 foreach (string blueprint in blueprints)
@@ -765,6 +848,7 @@ namespace Oxide.Plugins
 
         public class BaseSettings
         {
+            //Class of common used settings in deserilising
             public Quaternion rot = new Quaternion();
             public Vector3 pos = Vector3.zero;
             public string prefab = "";
@@ -788,6 +872,7 @@ namespace Oxide.Plugins
             public bool mounted = false;
             public int seat = 0;
             public string[] blueprints = new string[0];
+            public string[] mods = new string[0];
 
             public void ProcessPacket(List<Dictionary<string, string>> packets)
             {
@@ -857,6 +942,9 @@ namespace Oxide.Plugins
                             case "blueprints":
                                 blueprints = ii.Value.Split('|');
                                 break;
+                            case "modifiers":
+                                mods = ii.Value.Split('|');
+                                break;
                             case "seat":
                                 seat = int.Parse(ii.Value);
                                 break;
@@ -899,9 +987,8 @@ namespace Oxide.Plugins
             bv.SendNetworkUpdateImmediate();
         }
 
-
-            //Process data packet
-            public Dictionary<string, BaseNetworkable> ReadPacket(string packet, BaseEntity parent, int id)
+        //Process data packet
+        public Dictionary<string, BaseNetworkable> ReadPacket(string packet, BaseEntity parent, int id)
         {
             //List of entitys that have been recreated
             Dictionary<string, BaseNetworkable> CreatedEntitys = new Dictionary<string, BaseNetworkable>();
@@ -911,7 +998,7 @@ namespace Oxide.Plugins
                 //Mark Packet as read
                 MySQLWrite("", "", "", id, 1);
                 BasePlayer admin = null;
-                if(parent is BasePlayer)
+                if (parent is BasePlayer)
                 {
                     admin = parent as BasePlayer;
                     admin.ChatMessage("Admin Pasting");
@@ -979,6 +1066,18 @@ namespace Oxide.Plugins
                         }
                         continue;
                     }
+                    if (packets.Key.Contains("SnowMobile"))
+                    {
+                        var bc = ProcessSnowmobile(packets.Value, parent);
+                        if (bc != null)
+                        {
+                            foreach (KeyValuePair<string, BaseNetworkable> m in bc)
+                            {
+                                CreatedEntitys.Add(m.Key, m.Value);
+                            }
+                        }
+                        continue;
+                    }
                     if (packets.Key.Contains("BaseSubmarine"))
                     {
                         var bs = ProcessSub(packets.Value, parent);
@@ -1011,22 +1110,22 @@ namespace Oxide.Plugins
                     //Delay in these ones to allow car to be spawned
                     if (packets.Key.Contains("ModularCarEngine"))
                     {
-                        timer.Once(0.5f, () =>{ProcessModuleParts(packets.Value, SpawnedCars, 0);});
+                        timer.Once(0.5f, () => { ProcessModuleParts(packets.Value, SpawnedCars, 0); });
                         continue;
                     }
                     if (packets.Key.Contains("ModularCarStorage"))
                     {
-                        timer.Once(0.5f, () =>{ProcessModuleParts(packets.Value, SpawnedCars, 1);});
+                        timer.Once(0.5f, () => { ProcessModuleParts(packets.Value, SpawnedCars, 1); });
                         continue;
                     }
                     if (packets.Key.Contains("ModularCarCamper"))
                     {
-                        timer.Once(0.5f, () =>{ProcessModuleParts(packets.Value, SpawnedCars, 2);});
+                        timer.Once(0.5f, () => { ProcessModuleParts(packets.Value, SpawnedCars, 2); });
                         continue;
                     }
                     if (packets.Key.Contains("ModularCarBags"))
                     {
-                        timer.Once(0.5f, () =>{ProcessModuleParts(packets.Value, SpawnedCars, int.Parse(packets.Key.Replace("ModularCarBags[", "").Replace("]", "")));});
+                        timer.Once(0.5f, () => { ProcessModuleParts(packets.Value, SpawnedCars, int.Parse(packets.Key.Replace("ModularCarBags[", "").Replace("]", ""))); });
                         continue;
                     }
                     if (packets.Key.Contains("ModularCar"))
@@ -1071,7 +1170,6 @@ namespace Oxide.Plugins
             //Process boat and rhib
             BaseSettings settings = new BaseSettings();
             settings.ProcessPacket(packets);
-            //Create crane
             //Create boat
             BaseBoat boat = GameManager.server.CreateEntity(settings.prefab) as BaseBoat;
             if (boat == null) return null;
@@ -1108,6 +1206,20 @@ namespace Oxide.Plugins
             return new Dictionary<string, BaseNetworkable>() { { settings.netid, sub } };
         }
 
+        private Dictionary<string, BaseNetworkable> ProcessSnowmobile(List<Dictionary<string, string>> packets, BaseEntity parent)
+        {
+            //Process snowmobile
+            BaseSettings settings = new BaseSettings();
+            settings.ProcessPacket(packets);
+            //Create snowmobile
+            Snowmobile sm = GameManager.server.CreateEntity(settings.prefab) as Snowmobile;
+            if (sm == null) return null;
+            //spawn and setit up
+            sm.Spawn();
+            ApplySettings(sm, parent, settings.health, settings.maxhealth, settings.fuel, settings.ownerid, settings.pos, settings.rot);
+            return new Dictionary<string, BaseNetworkable>() { { settings.netid, sm } };
+        }
+
 
         private Dictionary<string, ModularCar> ProcessCar(List<Dictionary<string, string>> packets, BaseEntity parent)
         {
@@ -1127,10 +1239,7 @@ namespace Oxide.Plugins
             {
                 //Apply custom modules health
                 int cond = 0;
-                foreach (BaseVehicleModule vm in car.AttachedModuleEntities)
-                {
-                    try { vm.health = float.Parse(Modconditions[cond++]); } catch { vm.health = 50f; }
-                }
+                foreach (BaseVehicleModule vm in car.AttachedModuleEntities) { try { vm.health = float.Parse(Modconditions[cond++]); } catch { vm.health = 50f; } }
             });
             ApplySettings(car, parent, settings.health, settings.maxhealth, settings.fuel, settings.ownerid, settings.pos, settings.rot);
             return new Dictionary<string, ModularCar>() { { settings.netid, car } };
@@ -1396,7 +1505,7 @@ namespace Oxide.Plugins
                                                 thisserverport
                     });
                 }
-                    player.Kill();
+                player.Kill();
             }
             //Create new player for them to spawn into
             player = GameManager.server.CreateEntity("assets/prefabs/player/player.prefab", FerryPos.transform.position, FerryPos.transform.rotation, true).ToPlayer();
@@ -1422,6 +1531,7 @@ namespace Oxide.Plugins
             player.transform.localRotation = settings.rot;
             player.TransformChanged();
             setblueprints(player, settings.blueprints);
+            setmodifiers(player, settings.mods);
             player.SendNetworkUpdateImmediate();
             if (ShowDebugMsg) Puts("ProcessBasePlayer Setting ready flag for player to transition");
             plugin.UpdatePlayers(plugin.thisserverip + ":" + plugin.thisserverport, plugin.thisserverip + ":" + plugin.thisserverport, "Ready", settings.steamid.ToString());
@@ -1495,7 +1605,7 @@ namespace Oxide.Plugins
                             break;
                         case "slot":
                             //One item read from packet
-                            GiveContents(ownerid, id, condition, amount, skinid, code, int.Parse(ii.Value),mods, CreatedEntitys);
+                            GiveContents(ownerid, id, condition, amount, skinid, code, int.Parse(ii.Value), mods, CreatedEntitys);
                             break;
                     }
                 }
@@ -1519,10 +1629,10 @@ namespace Oxide.Plugins
                         return;
                     }
                     List<string> Wmods = new List<string>();
-                    if(mods != "")
+                    if (mods != "")
                     {
                         string[] wmod = mods.Split('|');
-                        foreach(string w in wmod)
+                        foreach (string w in wmod)
                         {
                             Wmods.Add(w);
                         }
@@ -1572,7 +1682,7 @@ namespace Oxide.Plugins
                     if (mod.Contains("="))
                     {
                         string[] modsetting = mod.Split('=');
-                        if(ShowDebugMsg)Puts("BuildItem adding mod " + modsetting[0] + " " + modsetting[1]);
+                        if (ShowDebugMsg) Puts("BuildItem adding mod " + modsetting[0] + " " + modsetting[1]);
                         item.contents.AddItem(CreateItem(int.Parse(modsetting[0]), 1, 0, float.Parse(modsetting[1]), code, 0).info, 1);
                     }
                 }
@@ -1644,7 +1754,7 @@ namespace Oxide.Plugins
                         data.Add("BasePlayerInventory[" + baseplayer.UserIDString + "]", itemlist);
                     }
                     //Show Open Nexus Screen
-                    plugin.AdjustConnectionScreen(baseplayer, "Open Nexus Transfering Data",10);
+                    plugin.AdjustConnectionScreen(baseplayer, "Open Nexus Transfering Data", 10);
                     baseplayer.ClientRPCPlayer(null, baseplayer, "StartLoading");
                     baseplayer.SetPlayerFlag(BasePlayer.PlayerFlags.ReceivingSnapshot, false);
                 }
@@ -1688,7 +1798,15 @@ namespace Oxide.Plugins
                     itemlist.Add(baseVechicle(crane, FerryPos));
                     data.Add("BaseCrane[" + crane.net.ID + "]", itemlist);
                 }
-                //create magnet crane packet
+                //create snowmobile packet
+                Snowmobile sm = entity as Snowmobile;
+                if (sm != null)
+                {
+                    itemlist = new List<Dictionary<string, string>>();
+                    itemlist.Add(baseVechicle(sm, FerryPos));
+                    data.Add("SnowMobile[" + sm.net.ID + "]", itemlist);
+                }
+                //create magnet sub packet
                 BaseSubmarine sub = entity as BaseSubmarine;
                 if (sub != null)
                 {
@@ -1902,9 +2020,9 @@ namespace Oxide.Plugins
                         { "hydration", baseplayer.metabolism.hydration.value.ToString() },
                         { "calories", baseplayer.metabolism.calories.value.ToString() },
                         { "blueprints", getblueprints(baseplayer) },
+                        { "modifiers", getmodifiers(baseplayer) },
                         { "seat", seat.ToString() },
                         { "mounted", baseplayer.isMounted.ToString() }
-
                         };
             return itemdata;
         }
@@ -2003,19 +2121,17 @@ namespace Oxide.Plugins
             public Transform MapMarkerLocation;
         }
 
-            //Open Nexus Ferry Code
-            public class OpenNexusFerry : BaseEntity
+        //Open Nexus Ferry Code
+        public class OpenNexusFerry : BaseEntity
         {
             //Variables
-            Transform FerryPos;
+            Transform FerryPos = null;
             public string ServerIP = "";
             public string ServerPort = "";
             public int retrys = 0;
             public bool ServerSynced = false;
             private bool LoadingSync = false;
             private OpenNexusFerry.State _state = OpenNexusFerry.State.Stopping;
-            public Vector3 DockPos;
-            public Quaternion DockRot;
             public Transform Docked = new GameObject().transform;
             public Transform Departure = new GameObject().transform;
             public Transform Arrival = new GameObject().transform;
@@ -2023,7 +2139,7 @@ namespace Oxide.Plugins
             public Transform CastingOff = new GameObject().transform;
             public Transform EjectionZone = new GameObject().transform;
             private TimeSince _sinceStartedWaiting;
-            public bool _isTransferring;
+            public bool _isTransferring = false;
             public List<BaseNetworkable> DockedEntitys = new List<BaseNetworkable>();
 
             //Avaliable States
@@ -2041,27 +2157,27 @@ namespace Oxide.Plugins
 
             private void Awake()
             {
-                //setup
-                gameObject.layer = 0;
-                //Delay to allow for spawn
                 Invoke(() =>
                 {
-                    FerryPos = transform;
+                    //setup
+                    gameObject.layer = 0;
+                    //Delay to allow for spawn
+                    FerryPos = this.transform;
                     //Set base position of dock
                     Docked.position = FerryPos.position;
                     Docked.rotation = FerryPos.rotation;
 
-                    ////Apply Offsets for movement
+                    //Apply Offsets for movement
                     if (plugin.AutoDistance)
                     {
                         Vector3 closest = Vector3.zero;
-                        foreach(KeyValuePair<Vector3,Quaternion> foundislands in plugin.FoundIslands)
+                        foreach (KeyValuePair<Vector3, Quaternion> foundislands in plugin.FoundIslands)
                         {
-                            if(closest == Vector3.zero)
+                            if (closest == Vector3.zero)
                             {
                                 closest = foundislands.Key;
                             }
-                            if(Vector3.Distance(FerryPos.position,foundislands.Key) < Vector3.Distance(FerryPos.position, closest))
+                            if (Vector3.Distance(FerryPos.position, foundislands.Key) < Vector3.Distance(FerryPos.position, closest))
                             {
                                 closest = foundislands.Key;
                             }
@@ -2087,7 +2203,7 @@ namespace Oxide.Plugins
                     //Set this server in sync state
                     plugin.UpdateSync(plugin.thisserverip + ":" + plugin.thisserverport, ServerIP + ":" + ServerPort, "Sync");
                     SyncFerrys();
-                }, 1f);
+                },1f);
             }
 
             private void OnDestroy()
@@ -2107,13 +2223,13 @@ namespace Oxide.Plugins
             private void Update()
             {
                 //Stops ferry doing anything if not setup/synced
-                if (ServerIP == "" || ServerPort == "" || _isTransferring || !ServerSynced) { return; }
+                if (!ServerSynced || ServerIP == "" || ServerPort == "" || _isTransferring) { return; }
                 if (this == null)
                 {
                     Die();
                     return;
                 }
-                if (!base.isServer){return;}
+                if (!base.isServer) { return; }
                 if (_state == OpenNexusFerry.State.Waiting)
                 {
                     if (_sinceStartedWaiting < plugin.WaitTime)
@@ -2123,7 +2239,7 @@ namespace Oxide.Plugins
                     }
                     SwitchToNextState();
                 }
-                if (MoveTowardsTarget()){SwitchToNextState();}
+                if (MoveTowardsTarget()) { SwitchToNextState(); }
             }
 
             //Get position to move to
@@ -2172,15 +2288,14 @@ namespace Oxide.Plugins
             }
 
             //Load DockedEntitys with everything paranted to Ferry
-            public void UpdateDockedEntitys(){DockedEntitys = GetFerryContents();}
-
+            public void UpdateDockedEntitys() { DockedEntitys = GetFerryContents(); }
 
             void SyncFerrys()
             {
                 if (LoadingSync) return;
                 string sqlQuery = "SELECT `state` FROM sync WHERE `sender` = @0 AND `target` = @1;";
                 //Read the targets state
-                Sql selectCommand = Oxide.Core.Database.Sql.Builder.Append(sqlQuery, ServerIP+":"+ServerPort, plugin.thisserverip+":"+plugin.thisserverport);
+                Sql selectCommand = Oxide.Core.Database.Sql.Builder.Append(sqlQuery, ServerIP + ":" + ServerPort, plugin.thisserverip + ":" + plugin.thisserverport);
                 plugin.sqlLibrary.Query(selectCommand, plugin.sqlConnection, list =>
                 {
                     if (list == null) { return; }
@@ -2202,12 +2317,12 @@ namespace Oxide.Plugins
                         }
                     }
                 });
-                    //Rerun again after delay
-                    Invoke(() => 
-                    {
-                        if (plugin.ShowDebugMsg) plugin.Puts("SyncFerrys Waiting For Other Server @ " + ServerIP + ":" + ServerPort);
-                        SyncFerrys(); 
-                    }, plugin.serverdelay);
+                //Rerun again after delay
+                Invoke(() =>
+                {
+                    if (plugin.ShowDebugMsg) plugin.Puts("SyncFerrys Waiting For Other Server @ " + ServerIP + ":" + ServerPort);
+                    SyncFerrys();
+                }, plugin.serverdelay);
             }
 
             private void SwitchToNextState()
@@ -2232,7 +2347,7 @@ namespace Oxide.Plugins
                 }
                 //update state
                 _state = GetNextState(_state);
-               if (_state == OpenNexusFerry.State.Waiting)
+                if (_state == OpenNexusFerry.State.Waiting)
                 {
                     _sinceStartedWaiting = 0f;
                     plugin.UpdateSync(plugin.thisserverip + ":" + plugin.thisserverport, ServerIP + ":" + ServerPort, "Waiting");
@@ -2248,7 +2363,7 @@ namespace Oxide.Plugins
                 {
                     plugin.UpdateSync(plugin.thisserverip + ":" + plugin.thisserverport, ServerIP + ":" + ServerPort, "CastingOff");
                     //Kick off all the entitys that already been on ferry
-                    plugin.EjectEntitys(GetFerryContents(), DockedEntitys,EjectionZone.position);
+                    plugin.EjectEntitys(GetFerryContents(), DockedEntitys, EjectionZone.position);
                     return;
                 }
             }
@@ -2261,7 +2376,7 @@ namespace Oxide.Plugins
                 }
                 return OpenNexusFerry.State.Invalid;
             }
-            
+
             private OpenNexusFerry.State GetNextState(OpenNexusFerry.State currentState)
             {
                 OpenNexusFerry.State state = currentState + 1;
@@ -2410,6 +2525,36 @@ namespace Oxide.Plugins
                         //Destroy the entity since its been sent in packet
                         be.Kill();
                     }
+                }
+            }
+        }
+        private class EdgeTeleport : FacepunchBehaviour
+        {
+            BaseMountable vechiel;
+            private uint RanMapSize;
+            private void Awake()
+            {
+                vechiel = GetComponent<BaseMountable>();
+                RanMapSize = (uint)(World.Size / 1.02);
+                if (RanMapSize >= 4000)
+                {
+                    RanMapSize = 3900;
+                }
+                InvokeRepeating(Check, 1f, 1f);
+            }
+            private void OnDestroy() { CancelInvoke(); }
+            public void DestroyMe() { Destroy(this); }
+            private void Check()
+            {
+                if (vechiel == null) DestroyMe();
+                if (!vechiel.IsMounted())
+                    return;
+
+                if (vechiel.transform.position.x > RanMapSize || vechiel.transform.position.x < (RanMapSize * -0.9) || vechiel.transform.position.z > RanMapSize || vechiel.transform.position.z < (RanMapSize * -0.9))
+                {
+                    vechiel.transform.position = new Vector3(vechiel.transform.position.x * -0.85f, vechiel.transform.position.y, vechiel.transform.position.z * -0.85f);
+                    vechiel.TransformChanged();
+                    return;
                 }
             }
         }
