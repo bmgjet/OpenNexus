@@ -1,7 +1,7 @@
 //None of this code is to be used in any paid project/plugins
 
 //TO DO:
-//Admin tools to view packets and stuff
+//Teams remain across servers
 //Final bug checks
 
 //Setting Up Dock On Map
@@ -50,7 +50,7 @@ namespace Oxide.Plugins
         public float TurnSpeed = 0.6f;          //How fast it can spin around
         public float WaitTime = 60;             //How long it waits at dock before leaving
         public int TransfereTime = 60;          //Max time it waits out at ocean for a transfer
-        public int ProgressDelay = 30;          //Extra time it waits after transfere for players to spawn on it
+        public int ProgressDelay = 60;          //Extra time it waits after transfere for players to spawn on it
         public int RedirectDelay = 5;           //How long after getting ready flag before it sends user to the next server
 
         //Advanced Settings
@@ -58,6 +58,7 @@ namespace Oxide.Plugins
         public string thisserverport = "";      //Over-ride auto detected port
         public bool UseCompression = true;      //Compress Data Packets (Recommended since it 1/4 the size of the data)
         public bool ShowDebugMsg = true;        //Outputs info to console
+        public string[] BaseVehicle = { "rowboat", "rhib", "scraptransporthelicopter", "minicopter.entity", "submarinesolo.entity", "submarineduo.entity" };
         //End Settings
 
         //Permissions
@@ -77,7 +78,7 @@ namespace Oxide.Plugins
 
         //Plugin Hooks
         [PluginReference]
-        private Plugin Backpacks, Economics, ZLevelsRemastered;
+        private Plugin Backpacks, Economics, ZLevelsRemastered, ServerRewards;
 
         #region Commands
         //Chat command to paste where admin is a transfered packet
@@ -182,6 +183,20 @@ namespace Oxide.Plugins
                     }
                     //Process mysql packet
                     ReadPacket(data, OpenFerry, id);
+                    //Kill stray bots that might of followed players
+                    List<BasePlayer> Bots = new List<BasePlayer>();
+                    List<BasePlayer> KillBots = new List<BasePlayer>();
+                    Vis.Entities<BasePlayer>(OpenFerry.transform.position + (OpenFerry.transform.rotation * Vector3.forward * 6), 14f, KillBots);
+                    foreach (BasePlayer bp in KillBots) { if (!Bots.Contains(bp) && !bp.IsNpc) { Bots.Add(bp); } }
+                    Vis.Entities<BasePlayer>(OpenFerry.transform.position + (OpenFerry.transform.rotation * Vector3.forward * -12), 14f, KillBots);
+                    foreach (BasePlayer bp in KillBots) { if (!Bots.Contains(bp) && !bp.IsNpc) { Bots.Add(bp); } }
+                    foreach(BasePlayer bot in Bots)
+                    {
+                        if (!IsSteamId(bot.UserIDString))
+                        {
+                            bot.Kill();
+                        }
+                    }
                     if (plugin.ShowDebugMsg) plugin.Puts("Read " + String.Format("{0:0.##}", (double)(entry["data"].ToString().Length / 1024f)) + " Kb");
                     return;
                 }
@@ -511,7 +526,12 @@ namespace Oxide.Plugins
             }
             plugin = null;
         }
-        private void Loaded() { if (Backpacks == null) { Puts("Backpacks plugin supported https://github.com/LaserHydra/Backpacks"); } if (Economics == null) { Puts("Economics supported https://umod.org/plugins/economics"); } if (ZLevelsRemastered == null) { Puts("ZLevels Remastered supported https://umod.org/plugins/zlevels-remastered"); } }
+        private void Loaded()
+        {
+            if (Backpacks == null) { Puts("Backpacks plugin supported https://github.com/LaserHydra/Backpacks"); }
+            if (Economics == null) { Puts("Economics supported https://umod.org/plugins/economics"); }
+            if (ZLevelsRemastered == null) { Puts("ZLevels Remastered supported https://umod.org/plugins/zlevels-remastered"); }
+            if (ServerRewards == null) { Puts("ServerRewards supported https://umod.org/plugins/server-rewards"); } }
         #endregion
 
         #region Startup
@@ -626,7 +646,54 @@ namespace Oxide.Plugins
         public Vector3 StringToVector3(string sVector) { if (sVector.StartsWith("(") && sVector.EndsWith(")")) { sVector = sVector.Substring(1, sVector.Length - 2); } string[] sArray = sVector.Split(','); Vector3 result = new Vector3(float.Parse(sArray[0]), float.Parse(sArray[1]), float.Parse(sArray[2])); return result; }
         public Quaternion StringToQuaternion(string sVector) { if (sVector.StartsWith("(") && sVector.EndsWith(")")) { sVector = sVector.Substring(1, sVector.Length - 2); } string[] sArray = sVector.Split(','); Quaternion result = new Quaternion(float.Parse(sArray[0]), float.Parse(sArray[1]), float.Parse(sArray[2]), float.Parse(sArray[3])); return result; }
         private void StartSleeping(BasePlayer player) { if (!player.IsSleeping()) { Interface.CallHook("OnPlayerSleep", player); player.SetPlayerFlag(BasePlayer.PlayerFlags.Sleeping, true); player.sleepStartTime = Time.time; BasePlayer.sleepingPlayerList.Add(player); player.CancelInvoke("InventoryUpdate"); player.CancelInvoke("TeamUpdate"); player.SendNetworkUpdateImmediate(); } }
-        private bool HasPermission(BasePlayer player, string perm) => permission.UserHasPermission(player.UserIDString, perm);      
+        private bool HasPermission(BasePlayer player, string perm) => permission.UserHasPermission(player.UserIDString, perm);
+        private bool IsSteamId(string id){ulong userId;if (!ulong.TryParse(id, out userId)) { return false; }return userId > 76561197960265728L;}
+
+        void DestroyGroundComp(BaseEntity ent)
+        {
+            foreach (var groundmissing in ent.GetComponentsInChildren<DestroyOnGroundMissing>())
+            {
+                UnityEngine.Object.DestroyImmediate(groundmissing);
+            }
+            foreach (var groundwatch in ent.GetComponentsInChildren<GroundWatch>())
+            {
+                UnityEngine.Object.DestroyImmediate(groundwatch);
+            }
+        }
+
+        void DestroyMeshCollider(BaseEntity ent)
+        {
+            foreach (var mesh in ent.GetComponentsInChildren<MeshCollider>())
+            {
+                UnityEngine.Object.DestroyImmediate(mesh);
+            }
+        }
+
+
+        void AddLock(BaseEntity ent, string data)
+        {
+            string[] codedata = data.Split(new string[] { "<CodeLock>" }, System.StringSplitOptions.RemoveEmptyEntries);
+            string[] wlp = codedata[4].Split(new string[] { "<player>" }, System.StringSplitOptions.RemoveEmptyEntries);
+            CodeLock alock = GameManager.server.CreateEntity("assets/prefabs/locks/keypad/lock.code.prefab") as CodeLock;
+            alock.Spawn();
+            foreach (string wl in wlp)
+            {
+                alock.whitelistPlayers.Add(ulong.Parse(wl));
+            }
+            try
+            {
+                alock.OwnerID = alock.whitelistPlayers[0];
+            }
+            catch { }
+            alock.code = codedata[2];
+            alock.SetParent(ent, ent.GetSlotAnchorName(BaseEntity.Slot.Lock));
+            alock.transform.localPosition = StringToVector3(codedata[0]);
+            alock.transform.localRotation = StringToQuaternion(codedata[1]);
+            ent.SetSlot(BaseEntity.Slot.Lock, alock);
+            alock.SetFlag(BaseEntity.Flags.Locked, bool.Parse(codedata[3]));
+            alock.enableSaving = true;
+            alock.SendNetworkUpdateImmediate(true);
+        }
 
         public void MountPlayer(BasePlayer player, int seatnum)
         {
@@ -959,7 +1026,7 @@ namespace Oxide.Plugins
                     lowgrade.Remove();
                 }
             }
-        }        
+        }
 
         private void ApplySettings(BaseVehicle bv, BaseEntity parent, float health, float maxhealth, int fuel, ulong ownerid, Vector3 pos, Quaternion rot)
         {
@@ -1013,12 +1080,14 @@ namespace Oxide.Plugins
                 var data = Newtonsoft.Json.JsonConvert.DeserializeObject<Dictionary<string, List<Dictionary<string, string>>>>(packet.Replace("<OpenNexus>", ""));
                 foreach (KeyValuePair<string, List<Dictionary<string, string>>> packets in data)
                 {
-                    //Process Packets
-                    if (packets.Key.Contains("BasePlayerBackpackData"))
+                    if (admin == null)
                     {
-                        SetBackpacksData(packets.Key, packets.Value);
-                        continue;
-                    }
+                        //Process Packets
+                        if (packets.Key.Contains("BasePlayerBackpackData"))
+                        {
+                            SetBackpacksData(packets.Key, packets.Value);
+                            continue;
+                        }
                         if (packets.Key.Contains("BasePlayerEconomicsData"))
                         {
                             foreach (Dictionary<string, string> i in packets.Value)
@@ -1028,16 +1097,30 @@ namespace Oxide.Plugins
                                     SetEconomicsData(ii.Key, ii.Value);
                                 }
                             }
-                         continue;
+                            continue;
+                        }
+                        if (packets.Key.Contains("BasePlayerServerRewardsData"))
+                        {
+                            foreach (Dictionary<string, string> i in packets.Value)
+                            {
+                                foreach (KeyValuePair<string, string> ii in i)
+                                {
+                                    SetServerRewardsData(ii.Key, ii.Value);
+                                }
+                            }
+                            continue;
                         }
                         if (packets.Key.Contains("BasePlayerZLevelsRemasteredData"))
                         {
-                           //Need API
+                            foreach (Dictionary<string, string> i in packets.Value)
+                            {
+                                foreach (KeyValuePair<string, string> ii in i)
+                                {
+                                    SetZLevelsRemasteredData(ii.Key, ii.Value);
+                                }
+                            }
                             continue;
                         }
-
-                    if (admin == null)
-                    {
                         if (packets.Key.Contains("BasePlayerInventory"))
                         {
                             ProcessItems(packets.Value, CreatedEntitys);
@@ -1187,6 +1270,8 @@ namespace Oxide.Plugins
             if (minicopter == null) return null;
             //spawn and setit up
             minicopter.Spawn();
+            AttachFamily(minicopter, settings.children);
+            if (settings.unlimitedfuel) { minicopter.fuelPerSec = 0; }
             ApplySettings(minicopter, parent, settings.health, settings.maxhealth, settings.fuel, settings.ownerid, settings.pos, settings.rot);
             return new Dictionary<string, BaseNetworkable>() { { settings.netid, minicopter } };
         }
@@ -1201,6 +1286,8 @@ namespace Oxide.Plugins
             if (boat == null) return null;
             //spawn and setit up
             boat.Spawn();
+            AttachFamily(boat, settings.children);
+            if (settings.unlimitedfuel) { (boat as MotorRowboat).fuelPerSec = 0; }
             ApplySettings(boat, parent, settings.health, settings.maxhealth, settings.fuel, settings.ownerid, settings.pos, settings.rot);
             return new Dictionary<string, BaseNetworkable>() { { settings.netid, boat } };
         }
@@ -1215,6 +1302,8 @@ namespace Oxide.Plugins
             if (crane == null) return null;
             //spawn and setit up
             crane.Spawn();
+            AttachFamily(crane, settings.children);
+            if (settings.unlimitedfuel) { crane.fuelPerSec = 0; }
             ApplySettings(crane, parent, settings.health, settings.maxhealth, settings.fuel, settings.ownerid, settings.pos, settings.rot);
             return new Dictionary<string, BaseNetworkable>() { { settings.netid, crane } };
         }
@@ -1228,6 +1317,8 @@ namespace Oxide.Plugins
             if (sub == null) return null;
             //spawn and setit up
             sub.Spawn();
+            AttachFamily(sub, settings.children);
+            if (settings.unlimitedfuel) { sub.maxFuelPerSec = 0; sub.idleFuelPerSec = 0; }
             ApplySettings(sub, parent, settings.health, settings.maxhealth, settings.fuel, settings.ownerid, settings.pos, settings.rot);
             return new Dictionary<string, BaseNetworkable>() { { settings.netid, sub } };
         }
@@ -1242,6 +1333,8 @@ namespace Oxide.Plugins
             if (sm == null) return null;
             //spawn and setit up
             sm.Spawn();
+            AttachFamily(sm, settings.children);
+            if (settings.unlimitedfuel) { sm.maxFuelPerSec = 0; sm.idleFuelPerSec = 0; }
             ApplySettings(sm, parent, settings.health, settings.maxhealth, settings.fuel, settings.ownerid, settings.pos, settings.rot);
             return new Dictionary<string, BaseNetworkable>() { { settings.netid, sm } };
         }
@@ -1259,12 +1352,21 @@ namespace Oxide.Plugins
             //Read module data and get it ready
             AttacheModules(car, settings.modules, settings.conditions);
             car.Spawn();
+            AttachFamily(car, settings.children);
             string[] Modconditions = settings.conditions.Split('|');
             NextTick(() =>
             {
                 //Apply custom modules health
                 int cond = 0;
-                foreach (BaseVehicleModule vm in car.AttachedModuleEntities) { try { vm.health = float.Parse(Modconditions[cond++]); } catch { vm.health = 50f; } }
+                foreach (BaseVehicleModule vm in car.AttachedModuleEntities)
+                {
+                    try { vm.health = float.Parse(Modconditions[cond++]); } catch { vm.health = 50f; }
+                    if (vm is VehicleModuleEngine)
+                    {
+                        (vm as VehicleModuleEngine).engine.idleFuelPerSec = 0;
+                        (vm as VehicleModuleEngine).engine.maxFuelPerSec = 0;
+                    }
+                }
             });
             ApplySettings(car, parent, settings.health, settings.maxhealth, settings.fuel, settings.ownerid, settings.pos, settings.rot);
             return new Dictionary<string, ModularCar>() { { settings.netid, car } };
@@ -1504,61 +1606,65 @@ namespace Oxide.Plugins
             //Process BasePlayer
             BaseSettings settings = new BaseSettings();
             settings.ProcessPacket(packets);
-            //Server Server for player already spawned;
-            BasePlayer player = BasePlayer.FindAwakeOrSleeping(settings.steamid);
-            if (player == null) player = BasePlayer.FindBot(ulong.Parse(settings.steamid)); //Allows BMGbots to chase players across servers
-            if (player != null)
+            if (IsSteamId(settings.steamid))
             {
-                //Drop all items on that player where they were asleep since shouldnt be a body when transfereing from ferry
-                if (player.inventory.AllItems().Length != 0)
+                //Server Server for player already spawned;
+                BasePlayer player = BasePlayer.FindAwakeOrSleeping(settings.steamid);
+                if (player == null) player = BasePlayer.FindBot(ulong.Parse(settings.steamid)); //Allows BMGbots to chase players across servers
+                if (player != null)
                 {
-                    foreach (Item item in player.inventory.AllItems())
+                    //Drop all items on that player where they were asleep since shouldnt be a body when transfereing from ferry
+                    if (player.inventory.AllItems().Length != 0)
                     {
-                        item.DropAndTossUpwards(player.transform.position);
+                        foreach (Item item in player.inventory.AllItems())
+                        {
+                            item.DropAndTossUpwards(player.transform.position);
+                        }
                     }
-                }
-                if (player.IsConnected)
-                {
-                    //Some how player is already on server so resync them to ferrys data.
-                    plugin.AdjustConnectionScreen(player, "Open Nexus Resyncing Server", 0);
-                    player.ClientRPCPlayer(null, player, "StartLoading");
-                    ConsoleNetwork.SendClientCommand(player.net.connection, "nexus.redirect", new object[]
+                    if (player.IsConnected)
                     {
+                        //Some how player is already on server so resync them to ferrys data.
+                        plugin.AdjustConnectionScreen(player, "Open Nexus Resyncing Server", 0);
+                        player.ClientRPCPlayer(null, player, "StartLoading");
+                        ConsoleNetwork.SendClientCommand(player.net.connection, "nexus.redirect", new object[]
+                        {
                                                 thisserverip,
                                                 thisserverport
-                    });
+                        });
+                    }
+                    player.Kill();
                 }
-                player.Kill();
+                //Create new player for them to spawn into
+                player = GameManager.server.CreateEntity("assets/prefabs/player/player.prefab", FerryPos.transform.position, FerryPos.transform.rotation, true).ToPlayer();
+                player.lifestate = BaseCombatEntity.LifeState.Dead;
+                player.ResetLifeStateOnSpawn = true;
+                player.SetFlag(BaseEntity.Flags.Protected, true);
+                player.Spawn();
+                StartSleeping(player);
+                player.CancelInvoke(player.KillMessage);
+                player.userID = ulong.Parse(settings.steamid);
+                player.UserIDString = settings.steamid;
+                player.displayName = settings.name;
+                player.eyeHistory.Clear();
+                player.lastTickTime = 0f;
+                player.lastInputTime = 0f;
+                player.stats.Init();
+                player.InitializeHealth(settings.health, settings.maxhealth);
+                player.metabolism.hydration.SetValue(settings.hydration);
+                player.metabolism.calories.SetValue(settings.calories);
+                DebugEx.Log(string.Format("{0} with steamid {1} joined from OpenNexus", player.displayName, player.userID), StackTraceLogType.None);
+                player.SetParent(FerryPos);
+                player.transform.localPosition = settings.pos;
+                player.transform.localRotation = settings.rot;
+                player.TransformChanged();
+                setblueprints(player, settings.blueprints);
+                setmodifiers(player, settings.mods);
+                player.SendNetworkUpdateImmediate();
+                if (ShowDebugMsg) Puts("ProcessBasePlayer Setting ready flag for player to transition");
+                plugin.UpdatePlayers(plugin.thisserverip + ":" + plugin.thisserverport, plugin.thisserverip + ":" + plugin.thisserverport, "Ready", settings.steamid.ToString());
+                return new Dictionary<string, BaseNetworkable>() { { settings.steamid, player } };
             }
-            //Create new player for them to spawn into
-            player = GameManager.server.CreateEntity("assets/prefabs/player/player.prefab", FerryPos.transform.position, FerryPos.transform.rotation, true).ToPlayer();
-            player.lifestate = BaseCombatEntity.LifeState.Dead;
-            player.ResetLifeStateOnSpawn = true;
-            player.SetFlag(BaseEntity.Flags.Protected, true);
-            player.Spawn();
-            StartSleeping(player);
-            player.CancelInvoke(player.KillMessage);
-            player.userID = ulong.Parse(settings.steamid);
-            player.UserIDString = settings.steamid;
-            player.displayName = settings.name;
-            player.eyeHistory.Clear();
-            player.lastTickTime = 0f;
-            player.lastInputTime = 0f;
-            player.stats.Init();
-            player.InitializeHealth(settings.health, settings.maxhealth);
-            player.metabolism.hydration.SetValue(settings.hydration);
-            player.metabolism.calories.SetValue(settings.calories);
-            DebugEx.Log(string.Format("{0} with steamid {1} joined from OpenNexus", player.displayName, player.userID), StackTraceLogType.None);
-            player.SetParent(FerryPos);
-            player.transform.localPosition = settings.pos;
-            player.transform.localRotation = settings.rot;
-            player.TransformChanged();
-            setblueprints(player, settings.blueprints);
-            setmodifiers(player, settings.mods);
-            player.SendNetworkUpdateImmediate();
-            if (ShowDebugMsg) Puts("ProcessBasePlayer Setting ready flag for player to transition");
-            plugin.UpdatePlayers(plugin.thisserverip + ":" + plugin.thisserverport, plugin.thisserverip + ":" + plugin.thisserverport, "Ready", settings.steamid.ToString());
-            return new Dictionary<string, BaseNetworkable>() { { settings.steamid, player } };
+            return null;
         }
 
         private void ProcessItems(List<Dictionary<string, string>> packets, Dictionary<string, BaseNetworkable> CreatedEntitys)
@@ -1626,7 +1732,7 @@ namespace Oxide.Plugins
                     List<string> Wmods = new List<string>();
                     if (mods != "")
                     {
-                        string[] wmod = mods.Split('|');
+                        string[] wmod = mods.Split('_');
                         foreach (string w in wmod)
                         {
                             Wmods.Add(w);
@@ -1751,18 +1857,19 @@ namespace Oxide.Plugins
                     if (itemlist.Count != 0)
                     {
                         data.Add("BasePlayerInventory[" + baseplayer.UserIDString + "]", itemlist);
-                        
+
                     }
-                    data.Add("BasePlayerBackpackData[" + baseplayer.UserIDString + "]", GetBackpackData(baseplayer.UserIDString));
-                    data.Add("BasePlayerEconomicsData[" + baseplayer.UserIDString + "]", GetEconomicsData(baseplayer.UserIDString));
-                    data.Add("BasePlayerZLevelsRemasteredData[" + baseplayer.UserIDString + "]", GetZLevelsRemasteredData(baseplayer.UserIDString));
+                    if (Backpacks != null) { data.Add("BasePlayerBackpackData[" + baseplayer.UserIDString + "]", GetBackpackData(baseplayer.UserIDString)); }
+                    if (Economics != null) { data.Add("BasePlayerEconomicsData[" + baseplayer.UserIDString + "]", GetEconomicsData(baseplayer.UserIDString)); }
+                    if (ZLevelsRemastered != null) { data.Add("BasePlayerZLevelsRemasteredData[" + baseplayer.UserIDString + "]", GetZLevelsRemasteredData(baseplayer.UserIDString)); }
+                    if (ServerRewards) { data.Add("BasePlayerServerRewardsData[" + baseplayer.UserIDString + "]", GetServerRewardsData(baseplayer.UserIDString)); }
                     //Show Open Nexus Screen
                     if (FerryPos is BasePlayer)
                     {
                         //Is admin command so dont do transfere screen.
                     }
                     else
-                    { 
+                    {
                         plugin.AdjustConnectionScreen(baseplayer, "Open Nexus Transfering Data", 10);
                         baseplayer.ClientRPCPlayer(null, baseplayer, "StartLoading");
                         baseplayer.SetPlayerFlag(BasePlayer.PlayerFlags.ReceivingSnapshot, false);
@@ -1945,21 +2052,17 @@ namespace Oxide.Plugins
         public List<Dictionary<string, string>> GetBackpackData(string Owner)
         {
             List<Dictionary<string, string>> Data = new List<Dictionary<string, string>>();
-            //Checks plugin is active
-            if (Backpacks != null)
+            ItemContainer Backpack;
+            //Gets data with API
+            Backpack = Backpacks?.Call<ItemContainer>("API_GetBackpackContainer", ulong.Parse(Owner));
+            //If has data
+            if (Backpack != null)
             {
-                ItemContainer Backpack;
-                //Gets data with API
-                Backpack = Backpacks?.Call<ItemContainer>("API_GetBackpackContainer", ulong.Parse(Owner));
-                //If has data
-                if (Backpack != null)
+                int s = 0;
+                //Create list of items in backpack
+                foreach (Item item in Backpack.itemList)
                 {
-                    int s = 0;
-                    //Create list of items in backpack
-                    foreach (Item item in Backpack.itemList)
-                    {
-                        Data.Add(Contents(item, Owner, s++.ToString()));
-                    }
+                    Data.Add(Contents(item, Owner, s++.ToString()));
                 }
             }
             return Data;
@@ -1999,10 +2102,10 @@ namespace Oxide.Plugins
                                     condition = float.Parse(ii.Value);
                                     break;
                                 case "amount":
-                                      amount = int.Parse(ii.Value);
+                                    amount = int.Parse(ii.Value);
                                     break;
                                 case "skinid":
-                                     skinid = ulong.Parse(ii.Value);
+                                    skinid = ulong.Parse(ii.Value);
                                     break;
                                 case "code":
                                     code = int.Parse(ii.Value);
@@ -2010,7 +2113,7 @@ namespace Oxide.Plugins
                                 case "mods":
                                     if (ii.Value != "")
                                     {
-                                        string[] wmod = ii.Value.Split('|');
+                                        string[] wmod = ii.Value.Split('_');
                                         foreach (string w in wmod)
                                         {
                                             Wmods.Add(w);
@@ -2028,14 +2131,33 @@ namespace Oxide.Plugins
             }
         }
 
+        //Reads players server rewards balance
+        public List<Dictionary<string, string>> GetServerRewardsData(string Owner)
+        {
+            List<Dictionary<string, string>> Data = new List<Dictionary<string, string>>();
+            object rwpoints = ServerRewards?.Call<object>("CheckPoints", ulong.Parse(Owner));
+            if (rwpoints != null)
+            {
+                Data.Add(new Dictionary<string, string> { { Owner, rwpoints.ToString() } });
+                ServerRewards?.Call<object>("TakePoints", ulong.Parse(Owner), int.Parse(rwpoints.ToString()));
+            }
+            return Data;
+        }
+
+        //Sets players server rewards balance
+        public void SetServerRewardsData(string Owner, string Balance)
+        {
+            if (ServerRewards != null && Owner != null && Balance != null)
+            {
+                ServerRewards?.Call<string>("AddPoints", Owner, int.Parse(Balance));
+            }
+        }
+
         //Reads players Economics balance
         public List<Dictionary<string, string>> GetEconomicsData(string Owner)
         {
             List<Dictionary<string, string>> Data = new List<Dictionary<string, string>>();
-            if (Economics != null)
-            {
-                Data.Add(new Dictionary<string, string> { { Owner, Economics?.Call<string>("Balance", Owner) } });
-            }
+            Data.Add(new Dictionary<string, string> { { Owner, Economics?.Call<string>("Balance", Owner) } });
             return Data;
         }
 
@@ -2051,20 +2173,19 @@ namespace Oxide.Plugins
         public List<Dictionary<string, string>> GetZLevelsRemasteredData(string Owner)
         {
             List<Dictionary<string, string>> Data = new List<Dictionary<string, string>>();
-            if (ZLevelsRemastered != null)
+            string pinfo = ZLevelsRemastered?.Call<string>("api_GetPlayerInfo", ulong.Parse(Owner));
+            if (pinfo != null || pinfo != "")
             {
-                //Waiting for API commands in plug
-
+                Data.Add(new Dictionary<string, string> { { Owner, pinfo } });
             }
             return Data;
         }
 
-        public void SetZLevelsRemasteredData(string key, List<Dictionary<string, string>> packets)
+        public void SetZLevelsRemasteredData(string ownerid, string packet)
         {
             if (ZLevelsRemastered != null)
             {
-                //Waiting for API commands in plug
-
+                bool updated = ZLevelsRemastered.Call<bool>("api_SetPlayerInfo", ulong.Parse(ownerid), packet);
             }
         }
 
@@ -2085,7 +2206,7 @@ namespace Oxide.Plugins
                 {
                     if (mod.info.itemid != 0)
                     {
-                        mods += (mod.info.itemid.ToString() + "=" + mod.condition.ToString() + "|");
+                        mods += (mod.info.itemid.ToString() + "=" + mod.condition.ToString() + "_");
                     }
                 }
             }
@@ -2106,6 +2227,42 @@ namespace Oxide.Plugins
         public Dictionary<string, string> baseVechicle(BaseVehicle bv, BaseEntity FerryPos, string socket = "0", string lockid = "0")
         {
             //baseVechicle packet
+            string Mounts = "";
+            if (bv != null)
+            {
+                foreach (BaseVehicle.MountPointInfo m in bv.mountPoints)
+                {
+                    Mounts += "<mount>" + m.pos.ToString() + "&" + m.rot.ToString() + "&" + m.mountable.transform.localRotation.ToString();
+                }
+            }
+            string unlimitedfuel = "False";
+
+            MiniCopter mc = bv as MiniCopter;
+            if (mc != null && mc.fuelPerSec == 0)
+            {
+                unlimitedfuel = "True";
+            }
+            MotorRowboat boat = bv as MotorRowboat;
+            if (boat != null && boat.fuelPerSec == 0)
+            {
+                unlimitedfuel = "True";
+            }
+            BaseCrane crane = bv as BaseCrane;
+            if (crane != null && crane.fuelPerSec == 0)
+            {
+                unlimitedfuel = "True";
+            }
+            BaseSubmarine sub = bv as BaseSubmarine;
+            if (sub != null && sub.maxFuelPerSec == 0)
+            {
+                unlimitedfuel = "True";
+            }
+            Snowmobile sm = bv as Snowmobile;
+            if (sm != null && sm.maxFuelPerSec == 0)
+            {
+                unlimitedfuel = "True";
+            }
+
             string Modules = "";
             string Conditions = "";
             //Create module and there condition list if car
@@ -2114,6 +2271,13 @@ namespace Oxide.Plugins
             {
                 foreach (var moduleEntity in car.AttachedModuleEntities)
                 {
+                    if (moduleEntity is VehicleModuleEngine)
+                    {
+                        if ((moduleEntity as VehicleModuleEngine).engine.maxFuelPerSec == 0)
+                        {
+                            unlimitedfuel = "True";
+                        }
+                    }
                     Modules += moduleEntity.AssociatedItemInstance.info.itemid + "|";
                     Conditions += moduleEntity._health + "|";
                 }
@@ -2126,10 +2290,12 @@ namespace Oxide.Plugins
                         { "rotation", (bv.transform.localRotation).ToString()},
                         { "health", bv._health.ToString() },
                         { "maxhealth", bv.MaxHealth().ToString() },
-                        { "fuel", bv.GetFuelSystem().GetFuelAmount().ToString() },
+                        { "fuel", bv.GetFuelSystem().GetFuelAmount().ToString()},
                         { "lockid", lockid },
                         { "modules", Modules},
+                        { "children", GetAllFamily(bv) + Mounts},
                         { "conditions", Conditions},
+                        { "unlimitedfuel", unlimitedfuel},
                         { "netid", bv.net.ID.ToString()},
                         { "sockets", socket },
                         };
@@ -2184,6 +2350,418 @@ namespace Oxide.Plugins
             return itemdata;
         }
 
+        void AddChilditems(BaseEntity ent, string data)
+        {
+            IItemContainerEntity ice = ent as IItemContainerEntity;
+            if (ice != null)
+            {
+                string[] itmlist = data.Split(new string[] { "<item>" }, System.StringSplitOptions.RemoveEmptyEntries);
+                int id = 0;
+                int amount = 0;
+                ulong skin = 0;
+                float condition = 0;
+                int code = 0;
+                List<string> mods = new List<string>();
+                foreach (string st in itmlist)
+                {
+                    string[] info = st.Split(',');
+                    if (info.Length != 2)
+                    {
+                        continue;
+                    }
+                    switch (info[0])
+                    {
+                        case "id":
+                            id = int.Parse(info[1]);
+                            break;
+                        case "condition":
+                            condition = float.Parse(info[1]);
+                            break;
+                        case "amount":
+                            amount = int.Parse(info[1]);
+                            break;
+                        case "skinid":
+                            skin = ulong.Parse(info[1]);
+                            break;
+                        case "code":
+                            code = int.Parse(info[1]);
+                            break;
+                        case "mods":
+                            if (info[1] != "")
+                            {
+                                string[] wmod = info[1].Split('_');
+                                foreach (string w in wmod)
+                                {
+                                    mods.Add(w);
+                                }
+                            }
+                            break;
+                        case "slot":
+                            int slot = 0;
+                            try
+                            {
+                                slot = int.Parse(info[1]);
+                            }
+                            catch { Puts(info[1]); }
+                            Item citem = BuildItem(id, amount, skin, condition, code, mods);
+                            if (ShowDebugMsg) Puts("Created child item " + citem.ToString());
+                            ice.inventory.Insert(citem);
+                            //citem.MoveToContainer(ice.inventory, slot);
+                            break;
+                    }
+                }
+            }
+        }
+
+        private void AttachFamily(BaseEntity parent, string stringdata)
+        {
+            if (stringdata == null || stringdata == "") { return; }
+            Dictionary<uint, uint> RemapNetID = new Dictionary<uint, uint>();
+            string[] children = stringdata.Split(new string[] { "<mount>" }, System.StringSplitOptions.RemoveEmptyEntries);
+            if (children.Length > 1)
+            {
+                BaseVehicle bv = parent as BaseVehicle;
+                if (bv != null)
+                {
+                    List<string> StockPos = new List<string>();
+                    foreach (BaseVehicle.MountPointInfo bmpi in bv.mountPoints) { StockPos.Add(bmpi.pos.ToString()); }
+                    for (int i = 1; i < children.Length; i++)
+                    {
+                        string[] splitd = children[i].Split('&');
+                        if (splitd.Length == 3)
+                        {
+                            if (StockPos.Contains(splitd[0])) { continue; }
+                            BaseEntity baseEntity = GameManager.server.CreateEntity(bv.mountPoints[1].prefab.resourcePath);
+                            BaseMountable baseMountable = baseEntity as BaseMountable;
+                            if (baseMountable != null)
+                            {
+                                BaseVehicle.MountPointInfo bminfo = new BaseVehicle.MountPointInfo
+                                {
+                                    isDriver = false,
+                                    pos = StringToVector3(splitd[0]),
+                                    rot = StringToVector3(splitd[1]),
+                                    bone = bv.mountPoints[1].bone,
+                                    prefab = bv.mountPoints[1].prefab,
+                                };
+
+                                if (!baseMountable.enableSaving)
+                                {
+                                    baseMountable.EnableSaving(true);
+                                }
+                                if (bminfo.bone != "")
+                                {
+                                    baseMountable.SetParent(bv, bminfo.bone, true, true);
+                                }
+                                else
+                                {
+                                    baseMountable.SetParent(bv, false, false);
+                                }
+                                baseMountable.transform.localPosition = bminfo.pos;
+                                baseMountable.transform.localRotation = StringToQuaternion(splitd[2]);
+                                baseMountable.Spawn();
+                                bminfo.mountable = baseMountable;
+                                bv.mountPoints.Add(bminfo);
+                            }
+                        }
+                    }
+                    bv.SendNetworkUpdateImmediate();
+                }
+            }
+            string[] child;
+            if (children.Length == 0)
+            {
+                child = stringdata.Split(new string[] { "<Child>" }, System.StringSplitOptions.RemoveEmptyEntries);
+            }
+            else
+            {
+                child = children[0].Split(new string[] { "<Child>" }, System.StringSplitOptions.RemoveEmptyEntries);
+            }
+            List<BaseEntity> Family = new List<BaseEntity>();
+            foreach (BaseEntity be in parent.children)
+            {
+                //Stop getting stuk in reference loop
+                if (Family.Contains(be)) { continue; }
+                //Add to list
+                Family.Add(be);
+            }
+            //Get orignal netid and get new netid
+            foreach (string data in child)
+            {
+                if (data == null || data == "") { continue; }
+                string[] cd = data.Split('|');
+                if (cd[0].Contains("<Parent>"))
+                {
+                    //Update remap
+                    RemapNetID.Add(uint.Parse(cd[0].Replace("<Parent>", "")), parent.net.ID);
+                    parent.skinID = ulong.Parse(cd[5]);
+                    SetFlags(parent, cd[8]);
+                    continue;
+                }
+                Vector3 pos = StringToVector3(cd[2]);
+                Quaternion rot = StringToQuaternion(cd[3]);
+                Vector3 scale = StringToVector3(cd[4]);
+                bool skip = false;
+                foreach (BaseEntity b in Family)
+                {
+                    if (b.transform.localPosition == pos && b.transform.rotation == rot && b.transform.localScale == scale)
+                    {
+                        skip = true;
+                        continue;
+                    }
+                }
+                if (skip) { continue; }
+                var e = GameManager.server.CreateEntity(StringPool.Get(uint.Parse(cd[1])), parent.transform.position + new Vector3(0, -10, 0));
+                if (e == null) { continue; }
+                uint oldnetid = uint.Parse(cd[0].Replace("<Child>", ""));
+                if (cd[11] == "DestroyOnGroundMissing")
+                {
+                    DestroyGroundComp(e);
+                }
+                if (cd[12] == "DestroyMeshCollider")
+                {
+                    DestroyMeshCollider(e);
+                }
+                e.Spawn();
+                if (!RemapNetID.ContainsKey(oldnetid))
+                {
+                    RemapNetID.Add(oldnetid, e.net.ID);
+                }
+                BaseNetworkable p = BaseNetworkable.serverEntities.Find(RemapNetID[uint.Parse(cd[15])]);
+                e.SetParent(p as BaseEntity);
+                e.transform.localPosition = pos;
+                e.transform.localRotation = rot;
+                e.transform.localScale = StringToVector3(cd[4]);
+                e.skinID = ulong.Parse(cd[5]);
+                SetFlags(e, cd[8]);
+                StabilityEntity s = e as StabilityEntity;
+                if (s != null && cd[9] != "null")
+                {
+                    s.grounded = bool.Parse(cd[9]);
+                }
+                BaseCombatEntity c = e as BaseCombatEntity;
+                if (c != null)
+                {
+                    c.InitializeHealth(float.Parse(cd[7]), float.Parse(cd[6]));
+                    if (cd[10] != "null")
+                    {
+                        c.pickup.enabled = bool.Parse(cd[10]);
+                    }
+                }
+                if (cd[13] != "null")
+                {
+                    AddLock(e, cd[13]);
+                }
+                if (cd[14] != "null")
+                {
+                    AddChilditems(e, cd[14]);
+                }
+                e.SendNetworkUpdateImmediate();
+            }
+            parent.SendNetworkUpdateImmediate();
+        }
+
+        private void SetFlags(BaseEntity be, string data)
+        {
+            string[] f = data.Split(new string[] { "<BEFlag>" }, System.StringSplitOptions.RemoveEmptyEntries);
+            List<bool> flags = new List<bool>();
+            foreach (string s in f)
+            {
+                try
+                {
+                    flags.Add(bool.Parse(s));
+                }
+                catch { }
+            }
+            be.SetFlag(BaseEntity.Flags.Broken, flags[0]);
+            be.SetFlag(BaseEntity.Flags.Busy, flags[1]);
+            be.SetFlag(BaseEntity.Flags.Debugging, flags[2]);
+            be.SetFlag(BaseEntity.Flags.Disabled, flags[3]);
+            be.SetFlag(BaseEntity.Flags.Locked, flags[4]);
+            be.SetFlag(BaseEntity.Flags.On, flags[5]);
+            be.SetFlag(BaseEntity.Flags.OnFire, flags[6]);
+            be.SetFlag(BaseEntity.Flags.Open, flags[7]);
+            if (be is Door)
+            {
+                NextTick(() =>
+                {
+                    (be as Door).SetOpen(be.flags.HasFlag(BaseEntity.Flags.Open));
+                });
+            }
+            be.SetFlag(BaseEntity.Flags.Placeholder, flags[8]);
+            be.SetFlag(BaseEntity.Flags.Protected, flags[9]);
+            be.SetFlag(BaseEntity.Flags.Reserved1, flags[10]);
+            be.SetFlag(BaseEntity.Flags.Reserved10, flags[11]);
+            be.SetFlag(BaseEntity.Flags.Reserved11, flags[12]);
+            be.SetFlag(BaseEntity.Flags.Reserved2, flags[13]);
+            be.SetFlag(BaseEntity.Flags.Reserved3, flags[14]);
+            be.SetFlag(BaseEntity.Flags.Reserved4, flags[15]);
+            be.SetFlag(BaseEntity.Flags.Reserved5, flags[16]);
+            be.SetFlag(BaseEntity.Flags.Reserved6, flags[17]);
+            be.SetFlag(BaseEntity.Flags.Reserved7, flags[18]);
+            be.SetFlag(BaseEntity.Flags.Reserved8, flags[19]);
+            be.SetFlag(BaseEntity.Flags.Reserved9, flags[20]);
+        }
+
+        public string GetBaseEntity(BaseEntity be, bool parent = false)
+        {
+            string baseentity = "";
+            //Use net id so can relink
+            if (parent) { baseentity += "<Parent>" + be.net.ID + "|"; }
+            else { baseentity += "<Child>" + be.net.ID + "|"; }
+            baseentity += be.prefabID.ToString() + "|";
+            baseentity += be.transform.localPosition.ToString() + "|";
+            baseentity += be.transform.localRotation.ToString() + "|";
+            baseentity += be.transform.localScale.ToString() + "|";
+            baseentity += be.skinID.ToString() + "|";
+            baseentity += be.MaxHealth().ToString() + "|";
+            baseentity += be.Health().ToString() + "|";
+            //Get all flags
+            baseentity += "<BEFlag>" + be.HasFlag(BaseEntity.Flags.Broken);
+            baseentity += "<BEFlag>" + be.HasFlag(BaseEntity.Flags.Busy);
+            baseentity += "<BEFlag>" + be.HasFlag(BaseEntity.Flags.Debugging);
+            baseentity += "<BEFlag>" + be.HasFlag(BaseEntity.Flags.Disabled);
+            baseentity += "<BEFlag>" + be.HasFlag(BaseEntity.Flags.Locked);
+            baseentity += "<BEFlag>" + be.HasFlag(BaseEntity.Flags.On);
+            baseentity += "<BEFlag>" + be.HasFlag(BaseEntity.Flags.OnFire);
+            baseentity += "<BEFlag>" + be.HasFlag(BaseEntity.Flags.Open);
+            baseentity += "<BEFlag>" + be.HasFlag(BaseEntity.Flags.Placeholder);
+            baseentity += "<BEFlag>" + be.HasFlag(BaseEntity.Flags.Protected);
+            baseentity += "<BEFlag>" + be.HasFlag(BaseEntity.Flags.Reserved1);
+            baseentity += "<BEFlag>" + be.HasFlag(BaseEntity.Flags.Reserved10);
+            baseentity += "<BEFlag>" + be.HasFlag(BaseEntity.Flags.Reserved11);
+            baseentity += "<BEFlag>" + be.HasFlag(BaseEntity.Flags.Reserved2);
+            baseentity += "<BEFlag>" + be.HasFlag(BaseEntity.Flags.Reserved3);
+            baseentity += "<BEFlag>" + be.HasFlag(BaseEntity.Flags.Reserved4);
+            baseentity += "<BEFlag>" + be.HasFlag(BaseEntity.Flags.Reserved5);
+            baseentity += "<BEFlag>" + be.HasFlag(BaseEntity.Flags.Reserved6);
+            baseentity += "<BEFlag>" + be.HasFlag(BaseEntity.Flags.Reserved7);
+            baseentity += "<BEFlag>" + be.HasFlag(BaseEntity.Flags.Reserved8);
+            baseentity += "<BEFlag>" + be.HasFlag(BaseEntity.Flags.Reserved9);
+            baseentity += "|";
+            //Check if ground
+            StabilityEntity s = be as StabilityEntity;
+            if (s == null)
+            {
+                baseentity += "null|";
+            }
+            else
+            {
+                baseentity += s.grounded.ToString() + "|";
+            }
+            //Check if can pickup
+            BaseCombatEntity c = be as BaseCombatEntity;
+            if (c == null)
+            {
+                baseentity += "null|";
+            }
+            else
+            {
+                baseentity += c.pickup.enabled.ToString() + "|";
+            }
+
+            if (!be.GetComponent<DestroyOnGroundMissing>())
+            {
+                baseentity += "DestroyOnGroundMissing|";
+            }
+            else
+            {
+                baseentity += "null|";
+            }
+            if (!be.GetComponent<MeshCollider>())
+            {
+                baseentity += "DestroyMeshCollider|";
+            }
+            else
+            {
+                baseentity += "null|";
+            }
+            if (be.GetSlot(0))
+            {
+                CodeLock codelock = be.GetSlot(0) as CodeLock;
+                if (codelock != null)
+                {
+                    baseentity += "<CodeLock>" + codelock.transform.localPosition;
+                    baseentity += "<CodeLock>" + codelock.transform.localRotation;
+                    baseentity += "<CodeLock>" + codelock.code;
+                    baseentity += "<CodeLock>" + codelock.HasFlag(CodeLock.Flags.Locked);
+                    baseentity += "<CodeLock>";
+                    foreach (ulong id in codelock.whitelistPlayers)
+                    {
+                        baseentity += "<player>" + id;
+                    }
+                    baseentity += "|";
+                }
+                else
+                {
+                    baseentity += "null|";
+                }
+            }
+            else
+            {
+                baseentity += "null|";
+            }
+            IItemContainerEntity ic = be as IItemContainerEntity;
+            if (ic == null)
+            {
+                baseentity += "null|";
+            }
+            else
+            {
+                 if (ic.inventory != null && ic.inventory.itemList != null)
+                {
+                    int sl = 0;
+                    List<Dictionary<string, string>> itmlist = new List<Dictionary<string, string>>();
+                    List<Item> added = new List<Item>();
+                    foreach (Item item in ic.inventory.itemList)
+                    {
+                        if(item == null || added.Contains(item)) { continue; }
+                        added.Add(item);
+                        itmlist.Add(Contents(item, be.OwnerID.ToString(), sl++.ToString()));
+                        item.Remove();
+                    }
+                    foreach (Dictionary<string, string> dict in itmlist)
+                    {
+                        foreach (KeyValuePair<string, string> itz in dict)
+                        {
+                            baseentity += itz.Key + "," + itz.Value + "<item>";
+                        }
+                    }
+                }
+                baseentity += "|";
+            }
+            //Get parents netid so can relink
+            BaseEntity p = be.GetParentEntity();
+            if (p == null)
+            {
+                baseentity += "null";
+            }
+            else
+            {
+                baseentity += be.GetParentEntity().net.ID.ToString();
+            }
+            return baseentity;
+        }
+
+        private string GetAllFamily(BaseEntity parent)
+        {
+            List<BaseEntity> Family = new List<BaseEntity>();
+            string XML = GetBaseEntity(parent, true);
+            foreach (BaseEntity be in parent.children)
+            {
+                //Stop getting stuk in reference loop
+                if (Family.Contains(be)) { continue; }
+                //Add to list
+                Family.Add(be);
+                XML += GetBaseEntity(be);
+                if (be.children != null || be.children.Count != 0)
+                {
+                    //Found children of chidren so run on them
+                    GetAllFamily(be);
+                }
+            }
+            return XML;
+        }
+
         #endregion
 
         #region Classes
@@ -2198,6 +2776,7 @@ namespace Oxide.Plugins
             public int fuel = 0;
             public ulong ownerid = 0;
             public string modules = "";
+            public string children = "";
             public string conditions = "";
             public int slots = 0;
             public string netid = "";
@@ -2212,6 +2791,7 @@ namespace Oxide.Plugins
             public float calories = 0;
             public bool mounted = false;
             public int seat = 0;
+            public bool unlimitedfuel = false;
             public string[] blueprints = new string[0];
             public string[] mods = new string[0];
 
@@ -2250,6 +2830,12 @@ namespace Oxide.Plugins
                             case "modules":
                                 modules = ii.Value;
                                 break;
+                            case "unlimitedfuel":
+                                unlimitedfuel = bool.Parse(ii.Value);
+                                break;
+                            case "children":
+                                children = ii.Value;
+                                break;
                             case "conditions":
                                 conditions = ii.Value;
                                 break;
@@ -2284,7 +2870,7 @@ namespace Oxide.Plugins
                                 blueprints = ii.Value.Split('|');
                                 break;
                             case "modifiers":
-                                mods = ii.Value.Split('|');
+                                mods = ii.Value.Split('_');
                                 break;
                             case "seat":
                                 seat = int.Parse(ii.Value);
@@ -2614,7 +3200,7 @@ namespace Oxide.Plugins
             }
 
             //Builds list of all basenetworkables on the ferry
-            public List<BaseNetworkable> GetFerryContents()
+            public List<BaseNetworkable> GetFerryContents(bool transfere = false)
             {
                 List<BaseNetworkable> list = Pool.GetList<BaseNetworkable>();
                 foreach (BaseNetworkable baseEntity in children)
@@ -2636,6 +3222,14 @@ namespace Oxide.Plugins
                         }
                     }
                     list.Add(baseEntity);
+                }
+                if (transfere)
+                {
+                    List<BasePlayer> CatchPlayersJumping = new List<BasePlayer>();
+                    Vis.Entities<BasePlayer>(this.transform.position + (this.transform.rotation * Vector3.forward * 6), 14f, CatchPlayersJumping);
+                    foreach (BasePlayer bp in CatchPlayersJumping){if (!list.Contains(bp) && !bp.IsNpc){list.Add(bp);}}
+                    Vis.Entities<BasePlayer>(this.transform.position + (this.transform.rotation * Vector3.forward * -12), 14f, CatchPlayersJumping);
+                    foreach (BasePlayer bp in CatchPlayersJumping){if (!list.Contains(bp) && !bp.IsNpc) {list.Add(bp);}}
                 }
                 return list;
             }
@@ -2683,7 +3277,7 @@ namespace Oxide.Plugins
                 List<BaseNetworkable> list = new List<BaseNetworkable>();
                 _state = OpenNexusFerry.State.Transferring;
                 //Get all entitys on the  ferry to transfere
-                list = GetFerryContents();
+                list = GetFerryContents(true);
                 //Check if anything to transfere
                 if (list.Count != 0)
                 {
@@ -2721,6 +3315,22 @@ namespace Oxide.Plugins
             uint RanMapSize;
             private void Awake()
             {
+                //Check if its a allowed entity
+                string[] prefab = this.name.Split('/');
+                if (plugin.BaseVehicle.Contains(prefab[prefab.Length - 1].Replace(".prefab", "")))
+                {
+                    setup();
+                }
+            }
+
+            private void setup()
+            {
+                //Stops trying to start when spawned back in on server restarting
+                if (Rust.Application.isLoading)
+                {
+                    Invoke(() => setup(), 10f);
+                    return;
+                }
                 RanMapSize = plugin.RanMapSize;
                 vehicle = GetComponent<BaseMountable>();
                 InvokeRepeating(Check, 1f, 1f);
