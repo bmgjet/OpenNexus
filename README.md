@@ -3,7 +3,7 @@
 <p><strong>What Transferes:</strong>
 <br>BasePlayer - stats, Inventory, Modifiers, Blueprints, Skins, Keys
 <br>BaseVehicle - stats, Inventory, Seats, Bags, Modules
-<br>Parented - Entits,skins,items
+<br>Parented - Entities,skins,items
 <br>Plugins - Backpacks, Inventory, Economics Balance, ServerRewards Points, ZLevels
 <br>Server - DateTime,Weather,Lock player to 1 server at time
 <p><strong>Hooks:</strong>
