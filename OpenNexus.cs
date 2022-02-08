@@ -4,10 +4,14 @@
 //OnOpenNexusRead(string packet)   return string to replace packet, Return bool to cancel function.
 //OnOpenNexusWrite(string packet)   return string to replace packet, Return bool to cancel function.
 
-//Bugs
-//Scrap heli loses items from 1 of its 8 boxes some times
-//Items ending up in different positions (cars) (Moveto fails to these and it uses insert)
+//Bugs:
+//Storage Module duping items on cars.
 
+
+//ToDo:
+//Teams
+//Clean up and optimise
+//Run though every item to again to check for bugs.
 
 //Setting Up Dock On Map
 //Make Custom Prefab group and name it SERVER=ipaddress,PORT=portnumber,name
@@ -55,7 +59,7 @@ namespace Oxide.Plugins
         private List<BaseNetworkable> unloadable = new List<BaseNetworkable>();
         private List<ulong> ProcessingPlayers = new List<ulong>();
         private List<ulong> MovePlayers = new List<ulong>();
-        private List<Dictionary<ItemModVehicleModule, float>> CarModules = new List<Dictionary<ItemModVehicleModule, float>>();
+        private List<ModuleData> CarModules = new List<ModuleData>();
         public static OpenNexus plugin;
         private Climate climate;
         private uint RanMapSize;
@@ -103,7 +107,7 @@ namespace Oxide.Plugins
             public FerrySettings _FerrySettings = new FerrySettings();
             internal class FerrySettings
             {
-                [JsonProperty("Seed that the ferry moves in water")]
+                [JsonProperty("Speed that the ferry moves in water")]
                 public float MoveSpeed;
                 [JsonProperty("Speed that the ferry can rotate in water")]
                 public float TurnSpeed;
@@ -128,7 +132,7 @@ namespace Oxide.Plugins
                         ServerDelay = 1f,
                         MySQLHost = "localhost",
                         MySQLPort = 3306,
-                        MySQLDB = "OpenNexus",
+                        MySQLDB = "opennexus",
                         MySQLUsername = "OpenNexus",
                         MySQLPassword = "1234",
                         ExtendFerryDistance = 0,
@@ -143,7 +147,7 @@ namespace Oxide.Plugins
                     {
                         MoveSpeed = 10f,
                         TurnSpeed = 0.6f,
-                        WaitTime = 290,
+                        WaitTime = 300,
                         EjectDelay = 10,
                         TransfereTime = 60,
                         ProgressDelay = 60,
@@ -175,6 +179,7 @@ namespace Oxide.Plugins
         #endregion
 
         #region Commands
+
         //Chat command to paste where admin is a transfered packet
         //Command /OpenNexus.Paste $PacketID
         [ChatCommand("OpenNexus.Paste")]
@@ -1383,33 +1388,33 @@ namespace Oxide.Plugins
         object OnVehicleModulesAssign(ModularCar car, ItemModVehicleModule[] modulePreset)
         {
             //Car is spawning with custom flag Check if there custom modules waiting
-            if (CarModules != null && CarModules.Count > 0) 
+            if (CarModules != null && CarModules.Count > 0)
             {
-                for (int i = 0; i < CarModules.Count; i++)
+                foreach (ModuleData md in CarModules.ToArray())
                 {
-                    foreach (KeyValuePair<ItemModVehicleModule, float> modinfo in CarModules[i])
-                    {
-                        Rust.Modular.ItemModVehicleModule itemModVehicleModule = modinfo.Key;
-                        if (itemModVehicleModule != null && car.Inventory.SocketsAreFree(i, itemModVehicleModule.socketsTaken, null))
+                        //Attach each module
+                        for (int i = 0; i < md.modules.Count; i++)
                         {
-                            itemModVehicleModule.doNonUserSpawn = true;
-                            global::Item item = global::ItemManager.Create(itemModVehicleModule.GetComponent<global::ItemDefinition>(), 1, 0UL);
-                            float num = UnityEngine.Random.Range(car.spawnSettings.minStartHealthPercent, car.spawnSettings.maxStartHealthPercent);
-                            item.condition = item.maxCondition * modinfo.Value;
-                            if (!car.TryAddModule(item))
+                            Rust.Modular.ItemModVehicleModule itemModVehicleModule = md.modules[i];
+                            if (itemModVehicleModule != null && car.Inventory.SocketsAreFree(i, itemModVehicleModule.socketsTaken, null))
                             {
-                                item.Remove(0f);
+                                itemModVehicleModule.doNonUserSpawn = true;
+                                Item item = ItemManager.Create(itemModVehicleModule.GetComponent<ItemDefinition>(), 1, 0UL);
+                                item.condition = item.maxCondition * md.condition[i];
+                                if (!car.TryAddModule(item)) { item.Remove(0f); }
                             }
                         }
+                        //remove from list since its done
+                        CarModules.Remove(md);
+                        //Call hook for any other plugins that use it.
+                        Interface.CallHook("OnVehicleModulesAssigned", this, CarModules);
+                        //Stop rest of default random spawn function.
+                        return true;
                     }
-                }
-                Interface.CallHook("OnVehicleModulesAssigned", this, CarModules);
-                return true;
             }
+            //Normal random modules spawn
             return null;
         }
-
-
 
         private void AttacheModules(ModularCar modularCar, string Modules, string Conditions)
         {
@@ -1417,10 +1422,10 @@ namespace Oxide.Plugins
             if (modularCar == null) return;
             string[] Modshortnames = Modules.Split('|');
             string[] Modconditions = Conditions.Split('|');
-            int conditionslot = 0;
-            List<ItemModVehicleModule> mods = new List<ItemModVehicleModule>();
             if (Modshortnames != null && Modshortnames.Length != 0 && Modconditions != null && Modconditions.Length != 0)
             {
+                int conditionslot = 0;
+                ModuleData MD = new ModuleData();
                 foreach (string shortname in Modshortnames)
                 {
                     if (shortname != null && shortname != "")
@@ -1437,10 +1442,11 @@ namespace Oxide.Plugins
                         item.MarkDirty();
                         ItemModVehicleModule component = item.info.GetComponent<ItemModVehicleModule>();
                         if (component == null) continue;
-                        Dictionary<ItemModVehicleModule, float> moddef = new Dictionary<ItemModVehicleModule, float> { { component, mcd } };
-                        CarModules.Add(moddef);
+                        MD.condition.Add(mcd);
+                        MD.modules.Add(component);
                     }
                 }
+                CarModules.Add(MD);
             }
         }
 
@@ -1578,6 +1584,7 @@ namespace Oxide.Plugins
                                     {
                                         foreach (var moduleEntity in mc.AttachedModuleEntities)
                                         {
+                                            ItemContainer Inventory;
                                             switch (type)
                                             {
                                                 //Apply engine parts
@@ -1585,7 +1592,7 @@ namespace Oxide.Plugins
                                                     VehicleModuleEngine vehicleModuleEngine = moduleEntity as VehicleModuleEngine;
                                                     if (vehicleModuleEngine != null)
                                                     {
-                                                        ItemContainer Inventory = vehicleModuleEngine.GetContainer()?.inventory;
+                                                        Inventory = vehicleModuleEngine.GetContainer()?.inventory;
                                                         if (Inventory != null)
                                                         {
                                                             Item item = CreateItem(id, amount, skinid, condition, code);
@@ -1593,11 +1600,8 @@ namespace Oxide.Plugins
                                                             {
                                                                 if (!item.MoveToContainer(Inventory, _int, true, true))
                                                                 {
-                                                                    NextTick(() =>
-                                                                    {
                                                                         item.position = _int;
                                                                         Inventory.Insert(item);
-                                                                    });
                                                                 }
                                                             }
                                                         }
@@ -1608,7 +1612,7 @@ namespace Oxide.Plugins
                                                     VehicleModuleStorage vehicleModuleStorage = moduleEntity as VehicleModuleStorage;
                                                     if (vehicleModuleStorage != null)
                                                     {
-                                                        ItemContainer Inventory = vehicleModuleStorage.GetContainer()?.inventory;
+                                                        Inventory = vehicleModuleStorage.GetContainer()?.inventory;
                                                         if (Inventory != null)
                                                         {
                                                             Item item = CreateItem(id, amount, skinid, condition, code);
@@ -1616,11 +1620,8 @@ namespace Oxide.Plugins
                                                             {
                                                                 if (!item.MoveToContainer(Inventory, _int, true, true))
                                                                 {
-                                                                    NextTick(() =>
-                                                                    {
                                                                         item.position = _int;
                                                                         Inventory.Insert(item);
-                                                                    });
                                                                 }
                                                             }
                                                         }
@@ -1629,6 +1630,7 @@ namespace Oxide.Plugins
                                                 //Process camper module
                                                 case 2:
                                                     VehicleModuleCamper vehicleModuleCamper = moduleEntity as VehicleModuleCamper;
+
                                                     if (vehicleModuleCamper != null)
                                                     {
                                                         Item item;
@@ -1636,46 +1638,49 @@ namespace Oxide.Plugins
                                                         {
                                                             //fill storage box
                                                             case 0:
-                                                                item = CreateItem(id, amount, skinid, condition, code);
-                                                                if (item != null)
+                                                                Inventory = vehicleModuleCamper.activeStorage.Get(true).inventory;
+                                                                if (Inventory != null)
                                                                 {
-                                                                    if (!item.MoveToContainer(vehicleModuleCamper.activeStorage.Get(true).inventory, _int, true, true))
+                                                                    item = CreateItem(id, amount, skinid, condition, code);
+                                                                    if (item != null)
                                                                     {
-                                                                        NextTick(() =>
+                                                                        if (!item.MoveToContainer(Inventory, _int, true, true))
                                                                         {
-                                                                            item.position = _int;
-                                                                            vehicleModuleCamper.activeStorage.Get(true).inventory.Insert(item);
-                                                                        });
+                                                                                item.position = _int;
+                                                                                Inventory.Insert(item);
+                                                                        }
                                                                     }
                                                                 }
                                                                 break;
                                                             case 1:
                                                                 //fill locker
-                                                                item = CreateItem(id, amount, skinid, condition, code);
-                                                                if (item != null)
+                                                                Inventory = vehicleModuleCamper.activeLocker.Get(true).inventory;
+                                                                if (Inventory != null)
                                                                 {
-                                                                    if (!item.MoveToContainer(vehicleModuleCamper.activeLocker.Get(true).inventory, _int, true, true))
+                                                                    item = CreateItem(id, amount, skinid, condition, code);
+                                                                    if (item != null)
                                                                     {
-                                                                        NextTick(() =>
+                                                                        if (!item.MoveToContainer(Inventory, _int, true, true))
                                                                         {
-                                                                            item.position = _int;
-                                                                            vehicleModuleCamper.activeLocker.Get(true).inventory.Insert(item);
-                                                                        });
+                                                                                item.position = _int;
+                                                                                Inventory.Insert(item);
+                                                                        }
                                                                     }
                                                                 }
                                                                 break;
                                                             case 2:
                                                                 //Fill bbq
-                                                                item = CreateItem(id, amount, skinid, condition, code);
-                                                                if (item != null)
+                                                                Inventory = vehicleModuleCamper.activeBbq.Get(true).inventory;
+                                                                if (Inventory != null)
                                                                 {
-                                                                    if (!item.MoveToContainer(vehicleModuleCamper.activeBbq.Get(true).inventory, _int, true, true))
+                                                                    item = CreateItem(id, amount, skinid, condition, code);
+                                                                    if (item != null)
                                                                     {
-                                                                        NextTick(() =>
+                                                                        if (!item.MoveToContainer(Inventory, _int, true, true))
                                                                         {
-                                                                            item.position = _int;
-                                                                            vehicleModuleCamper.activeBbq.Get(true).inventory.Insert(item);
-                                                                        });
+                                                                                item.position = _int;
+                                                                                Inventory.Insert(item);
+                                                                        }
                                                                     }
                                                                 }
                                                                 break;
@@ -1965,10 +1970,8 @@ namespace Oxide.Plugins
             var data = new Dictionary<string, List<Dictionary<string, string>>>();
             var itemlist = new List<Dictionary<string, string>>();
             //Loop though all basenetworkables that are parented to ferry
-            foreach (BaseNetworkable entity in Transfere)
+            foreach (BaseEntity entity in Transfere)
             {
-                //Check for bags only one flag
-                bool donebags = false;
                 //Create a baseplayer packet
                 BasePlayer baseplayer = entity as BasePlayer;
                 if (baseplayer?.inventory != null)
@@ -2028,6 +2031,14 @@ namespace Oxide.Plugins
                         baseplayer.ClientRPCPlayer(null, baseplayer, "StartLoading");
                         baseplayer.SetPlayerFlag(BasePlayer.PlayerFlags.ReceivingSnapshot, false);
                     }
+                    continue;
+                }
+                //create modular car packet
+                ModularCar car = entity as ModularCar;
+                if (car != null)
+                {
+                    modularCar(car, FerryPos, ref data);
+                    continue;
                 }
                 //Create a horse packet
                 RidableHorse horse = entity as RidableHorse;
@@ -2039,18 +2050,15 @@ namespace Oxide.Plugins
                     itemlist = new List<Dictionary<string, string>>();
                     for(int slot = 0; slot < horse.inventory.capacity; slot++)
                     {
-                        try
-                        {
                             Item item = horse.inventory.itemList[slot];
                             if (item != null)
                             {
                                 itemlist.Add(Contents(item, horse.net.ID.ToString(), item.position.ToString()));
                                 item.Remove();
                             }
-                        }
-                        catch { }
                     }
                     data.Add("BaseHorseInventory[" + horse.net.ID.ToString() + "]", itemlist);
+                    continue;
                 }
                 //create helicopter packet
                 MiniCopter helicopter = entity as MiniCopter;
@@ -2059,6 +2067,7 @@ namespace Oxide.Plugins
                     itemlist = new List<Dictionary<string, string>>();
                     itemlist.Add(baseVechicle(helicopter, FerryPos));
                     data.Add("MiniCopter[" + helicopter.net.ID + "]", itemlist);
+                    continue;
                 }
                 //create boat packet
                 BaseBoat boat = entity as BaseBoat;
@@ -2067,6 +2076,7 @@ namespace Oxide.Plugins
                     itemlist = new List<Dictionary<string, string>>();
                     itemlist.Add(baseVechicle(boat, FerryPos));
                     data.Add("BaseBoat[" + boat.net.ID + "]", itemlist);
+                    continue;
                 }
                 //create magnet crane packet
                 BaseCrane crane = entity as BaseCrane;
@@ -2075,6 +2085,7 @@ namespace Oxide.Plugins
                     itemlist = new List<Dictionary<string, string>>();
                     itemlist.Add(baseVechicle(crane, FerryPos));
                     data.Add("BaseCrane[" + crane.net.ID + "]", itemlist);
+                    continue;
                 }
                 //create snowmobile packet
                 Snowmobile sm = entity as Snowmobile;
@@ -2083,6 +2094,7 @@ namespace Oxide.Plugins
                     itemlist = new List<Dictionary<string, string>>();
                     itemlist.Add(baseVechicle(sm, FerryPos));
                     data.Add("SnowMobile[" + sm.net.ID + "]", itemlist);
+                    continue;
                 }
                 //create magnet sub packet
                 BaseSubmarine sub = entity as BaseSubmarine;
@@ -2091,154 +2103,7 @@ namespace Oxide.Plugins
                     itemlist = new List<Dictionary<string, string>>();
                     itemlist.Add(baseVechicle(sub, FerryPos));
                     data.Add("BaseSubmarine[" + sub.net.ID + "]", itemlist);
-                }
-                //create modular car packet
-                ModularCar car = entity as ModularCar;
-                if (car != null)
-                {
-                    string thiscarID = car.net.ID.ToString();
-                    itemlist = new List<Dictionary<string, string>>();
-                    itemlist.Add(baseVechicle(car, FerryPos, car.TotalSockets.ToString(), car.carLock.LockID.ToString()));
-                    data.Add("ModularCar[" + thiscarID + "]", itemlist);
-                    int socket = 0;
-                    List<Item> EngineParts = new List<Item>();
-                    List<Item> StorageContainer = new List<Item>();
-                    foreach (var moduleEntity in car.AttachedModuleEntities)
-                    {
-                        itemlist = new List<Dictionary<string, string>>();
-                        VehicleModuleEngine vehicleModuleEngine = moduleEntity as VehicleModuleEngine;
-                        VehicleModuleStorage vehicleModuleStorage = moduleEntity as VehicleModuleStorage;
-                        VehicleModuleCamper vehicleModuleCamper = moduleEntity as VehicleModuleCamper;
-                        //Create packet of engine parts
-                        if (vehicleModuleEngine != null)
-                        {
-                            ItemContainer engineInventory = vehicleModuleEngine.GetContainer()?.inventory;
-                            if (engineInventory != null)
-                            {
-                                for (int slot = 0; slot < engineInventory.capacity; slot++)
-                                {
-                                    try
-                                    {
-                                        Item item = engineInventory.itemList[slot];
-                                        if (item != null)
-                                        {
-                                            EngineParts.Add(item);
-                                            itemlist.Add(Contents(item, thiscarID, item.position.ToString(), socket.ToString()));
-                                        }
-                                    }
-                                    catch { }
-                                }
-                                if (itemlist.Count != 0) { data.Add("ModularCarEngine[" + vehicleModuleEngine.net.ID.ToString() + "]", itemlist); }
-                            }
-                        }
-                        if (vehicleModuleStorage != null)
-                        {
-                            //create packet of storage box items
-                            ItemContainer storageInventory = vehicleModuleStorage.GetContainer()?.inventory;
-                            if (storageInventory != null)
-                            {
-                                itemlist = new List<Dictionary<string, string>>();
-                                for (int slot = 0; slot < storageInventory.capacity; slot++)
-                                {
-                                    try
-                                    {
-                                        Item item = storageInventory.itemList[slot];
-                                        if (item != null)
-                                        {
-                                            if (!EngineParts.Contains(item))
-                                            {
-                                                StorageContainer.Add(item);
-                                                itemlist.Add(Contents(item, thiscarID, item.position.ToString(), socket.ToString()));
-                                            }
-                                        }
-                                    }
-                                    catch { }
-                                }
-                                if (itemlist.Count != 0) { data.Add("ModularCarStorage[" + vehicleModuleStorage.net.ID.ToString() + "]", itemlist); }
-                            }
-                        }
-                        if (vehicleModuleCamper != null)
-                        {
-                            //create packet of camper module parts
-                            ItemContainer camperInventory = vehicleModuleCamper.GetContainer()?.inventory;
-                            if (camperInventory != null)
-                            {
-                                itemlist = new List<Dictionary<string, string>>();
-                                //Store position of stoage container
-                                for (int slot = 0; slot < vehicleModuleCamper.activeStorage.Get(true).inventory.capacity; slot++)
-                                {
-                                    try
-                                    {
-                                        Item item = vehicleModuleCamper.activeStorage.Get(true).inventory.itemList[slot];
-                                        if (item != null)
-                                        {
-                                            if (!EngineParts.Contains(item) && !StorageContainer.Contains(item))
-                                            {
-                                                StorageContainer.Add(item);
-                                                itemlist.Add(Contents(item, thiscarID, item.position.ToString(), "0"));
-                                            }
-                                        }
-                                    }
-                                    catch { }
-                                }
-                                for (int slot = 0; slot < vehicleModuleCamper.activeLocker.Get(true).inventory.capacity; slot++)
-                                {
-                                    try { 
-                                    Item item = vehicleModuleCamper.activeLocker.Get(true).inventory.itemList[slot];
-                                    if (item != null)
-                                    {
-                                        if (!EngineParts.Contains(item) && !StorageContainer.Contains(item))
-                                        {
-                                            StorageContainer.Add(item);
-                                            itemlist.Add(Contents(item, thiscarID, item.position.ToString(), "1"));
-                                        }
-                                    }
-                                    }
-                                    catch { }
-                                }
-                                for (int slot = 0; slot < vehicleModuleCamper.activeBbq.Get(true).inventory.capacity; slot++)
-                                {
-                                    try { 
-                                    Item item = vehicleModuleCamper.activeBbq.Get(true).inventory.itemList[slot];
-                                    if (item != null)
-                                    {
-                                        if (!EngineParts.Contains(item) && !StorageContainer.Contains(item))
-                                        {
-                                            StorageContainer.Add(item);
-                                            itemlist.Add(Contents(item, thiscarID, item.position.ToString(), "2"));
-                                        }
-                                    }
-                                    }
-                                    catch { }
-                                }
-                                if (itemlist.Count != 0) { data.Add("ModularCarCamper[" + vehicleModuleCamper.net.ID.ToString() + "]", itemlist); }
-                            }
-                        }
-                        if (!donebags)
-                        {
-                            //Find all bags for this entity
-                            itemlist = new List<Dictionary<string, string>>();
-                            string bags = "";
-                            foreach (BaseEntity baseEntity in car.children)
-                            {
-                                if (baseEntity == null) continue;
-                                foreach (BaseEntity baseEntity2 in baseEntity.children)
-                                {
-                                    if (baseEntity2 == null) continue;
-                                    SleepingBag sleepingBagCamper;
-                                    if ((sleepingBagCamper = (baseEntity2 as SleepingBag)) != null) { bags += sleepingBagCamper.niceName + "<uid>" + sleepingBagCamper.deployerUserID.ToString() + "<bag>"; }
-                                }
-                            }
-                            //Check it found some to create its packet
-                            if (bags != "") { itemlist.Add(new Dictionary<string, string> { { "bags", bags } }); }
-                            if (itemlist.Count != 0) { data.Add("ModularCarBags[" + car.net.ID.ToString() + "]", itemlist); }
-                            donebags = true;
-                        }
-                        socket++;
-                    }
-                    //Remove items since will be killing entity on transfere and dont want loot bags dropping
-                    foreach (Item olditem in EngineParts) { olditem.Remove(); }
-                    foreach (Item olditem in StorageContainer) { olditem.Remove(); }
+                    continue;
                 }
             }
             //Seralize and tag as OpenNexus packet
@@ -2430,6 +2295,109 @@ namespace Oxide.Plugins
             return itemdata;
         }
 
+        private List<Dictionary<string, string>> ModularItems(ItemContainer storageInventory, string thiscarID, string socket)
+        {
+            List<Dictionary<string, string>>  itemlist = new List<Dictionary<string, string>>();
+            if (storageInventory != null)
+            {
+                foreach (Item item in storageInventory.itemList)
+                {
+                    if (item != null)
+                    {
+                        itemlist.Add(Contents(item, thiscarID, item.position.ToString(), socket));
+                        item.Remove();
+                    }
+                }
+            }
+            return itemlist;
+        }
+
+        private void modularCar(ModularCar car, BaseEntity FerryPos, ref Dictionary<string, List<Dictionary<string, string>>> data)
+        {
+            bool donebags = false;
+            string thiscarID = car.net.ID.ToString();
+            List<Dictionary<string, string>> itemlist = new List<Dictionary<string, string>>();
+            itemlist.Add(baseVechicle(car, FerryPos, car.TotalSockets.ToString(), car.carLock.LockID.ToString()));
+            data.Add("ModularCar[" + thiscarID + "]", itemlist);
+            int socket = 0;
+            foreach (BaseVehicleModule moduleEntity in car.AttachedModuleEntities)
+            {
+                VehicleModuleEngine vehicleModuleEngine = moduleEntity as VehicleModuleEngine;
+                //Create packet of engine parts
+                if (vehicleModuleEngine != null)
+                {
+                    data.Add("ModularCarEngine[" + vehicleModuleEngine.net.ID.ToString() + "]", ModularItems(vehicleModuleEngine.GetContainer().inventory, thiscarID, socket.ToString()));
+                    continue;
+                }
+
+                VehicleModuleStorage vehicleModuleStorage = moduleEntity as VehicleModuleStorage;
+                if (vehicleModuleStorage != null)
+                {
+                    //create packet of storage box items
+                        data.Add("ModularCarStorage[" + vehicleModuleStorage.net.ID.ToString() + "]", ModularItems(vehicleModuleStorage.GetContainer().inventory, thiscarID, socket.ToString()));
+                        continue;
+                }
+                VehicleModuleCamper vehicleModuleCamper = moduleEntity as VehicleModuleCamper;
+                if (vehicleModuleCamper != null)
+                {
+                    //create packet of camper module parts
+                    ItemContainer camperInventory = vehicleModuleCamper.GetContainer().inventory;
+                    if (camperInventory != null)
+                    {
+                        itemlist = new List<Dictionary<string, string>>();
+                        //Store position of stoage container
+                        foreach(Item item in vehicleModuleCamper.activeStorage.Get(true).inventory.itemList)
+                        {
+                                if (item != null)
+                                {
+                                    itemlist.Add(Contents(item, thiscarID, item.position.ToString(), "0"));
+                                    item.Remove();
+                                }
+                        }
+                        foreach (Item item in vehicleModuleCamper.activeLocker.Get(true).inventory.itemList)
+                        {
+                                if (item != null)
+                                {
+                                    itemlist.Add(Contents(item, thiscarID, item.position.ToString(), "1"));
+                                    item.Remove();
+                                }
+                        }
+                        foreach (Item item in vehicleModuleCamper.activeBbq.Get(true).inventory.itemList)
+                        {
+                                if (item != null)
+                                {
+                                    itemlist.Add(Contents(item, thiscarID, item.position.ToString(), "2"));
+                                    item.Remove();
+                                }
+                        }
+                        if (itemlist.Count != 0) { data.Add("ModularCarCamper[" + vehicleModuleCamper.net.ID.ToString() + "]", itemlist); }
+                        continue;
+                    }
+                }
+                if (!donebags)
+                {
+                    //Find all bags for this entity
+                    itemlist = new List<Dictionary<string, string>>();
+                    string bags = "";
+                    foreach (BaseEntity baseEntity in car.children)
+                    {
+                        if (baseEntity == null) continue;
+                        foreach (BaseEntity baseEntity2 in baseEntity.children)
+                        {
+                            if (baseEntity2 == null) continue;
+                            SleepingBag sleepingBagCamper;
+                            if ((sleepingBagCamper = (baseEntity2 as SleepingBag)) != null) { bags += sleepingBagCamper.niceName + "<uid>" + sleepingBagCamper.deployerUserID.ToString() + "<bag>"; }
+                        }
+                    }
+                    //Check it found some to create its packet
+                    if (bags != "") { itemlist.Add(new Dictionary<string, string> { { "bags", bags } }); }
+                    if (itemlist.Count != 0) { data.Add("ModularCarBags[" + car.net.ID.ToString() + "]", itemlist); }
+                    donebags = true;
+                }
+                socket++;
+            }
+        }
+
         private Dictionary<string, string> baseVechicle(BaseVehicle bv, BaseEntity FerryPos, string socket = "0", string lockid = "0")
         {
             //baseVechicle packet
@@ -2437,11 +2405,7 @@ namespace Oxide.Plugins
             string Mounts = "";
             string Modules = "";
             string Conditions = "";
-            //Get all seat points
-            if (bv.mountPoints != null && bv.mountPoints.Count > 0)
-            {
-                foreach (BaseVehicle.MountPointInfo m in bv.mountPoints) { Mounts += "<mount>" + m.pos.ToString() + "&" + m.rot.ToString() + "&" + m.mountable.transform.localRotation.ToString(); }
-            }
+            string Childred = "";
             //Check if has unlimited fuel mods
             string unlimitedfuel = "False";
             MiniCopter mc = bv as MiniCopter;
@@ -2471,6 +2435,16 @@ namespace Oxide.Plugins
                     }
                 }
             }
+            //Dont do this for modular cars or it breaks them
+            else
+            {
+                //Get all seat points
+                if (bv.mountPoints != null && bv.mountPoints.Count > 0)
+                {
+                    foreach (BaseVehicle.MountPointInfo m in bv.mountPoints) { Mounts += "<mount>" + m.pos.ToString() + "&" + m.rot.ToString() + "&" + m.mountable.transform.localRotation.ToString(); }
+                }
+                Childred = GetAllFamily(bv) + Mounts;
+            }
             var itemdata = new Dictionary<string, string>
                         {
                         { "ownerid", bv.OwnerID.ToString() },
@@ -2482,7 +2456,7 @@ namespace Oxide.Plugins
                         { "fuel", bv.GetFuelSystem().GetFuelAmount().ToString()},
                         { "lockid", lockid },
                         { "modules", Modules},
-                        { "children", GetAllFamily(bv) + Mounts},
+                        { "children", Childred },
                         { "conditions", Conditions},
                         { "unlimitedfuel", unlimitedfuel},
                         { "netid", bv.net.ID.ToString()},
@@ -3416,6 +3390,12 @@ namespace Oxide.Plugins
                 }
             }
         }
+        private class ModuleData
+        {
+            public List<float> condition = new List<float>();
+            public List<ItemModVehicleModule> modules = new List<ItemModVehicleModule>();
+        }
+
         private class EdgeTeleport : FacepunchBehaviour
         {
             BaseMountable vehicle;
