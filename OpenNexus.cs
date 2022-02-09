@@ -5,11 +5,9 @@
 //OnOpenNexusWrite(string packet)   return string to replace packet, Return bool to cancel function.
 
 //Bugs:
-//Storage Module duping items on cars.
-
 
 //ToDo:
-//Teams
+//Teams (Need to test)
 //Clean up and optimise
 //Run though every item to again to check for bugs.
 
@@ -945,6 +943,104 @@ namespace Oxide.Plugins
             });
         }
 
+        private string getteams(BasePlayer player)
+        {
+            string teams = "";
+            if (player != null)
+            {
+                foreach (var playerTeam in RelationshipManager.ServerInstance.teams.Values)
+                {
+                    if(playerTeam.teamID == 0UL || !playerTeam.teamLeader.IsSteamId() || playerTeam.members.IsNullOrEmpty()) continue;
+                    if (playerTeam.members.Contains(player.userID))
+                    {
+                        teams += playerTeam.teamLeader.ToString() + ",";
+                        foreach (ulong p in playerTeam.members)
+                        {
+                            teams += p.ToString() + "<DN>" + BasePlayer.FindAwakeOrSleeping(p.ToString()).displayName + ",";
+                        }
+                    }
+                }
+            }
+            Puts(teams);
+            return teams;
+        }
+
+        private void setteams(BasePlayer player, string teamdata)
+        {
+            if(teamdata == null || teamdata == "") { return; }
+            List<ulong> playersinteams = new List<ulong>();
+            bool alreadyinteam = false;
+            foreach (var playerTeam in RelationshipManager.ServerInstance.teams.Values)
+            {
+                foreach (ulong p in playerTeam.members)
+                {
+                    playersinteams.Add(p);
+                }
+                if (playerTeam.members.Contains(player.userID))
+                {
+                    alreadyinteam = true;
+                }
+            }
+            if (alreadyinteam)
+            {
+                return; 
+            }
+            string[] teams = teamdata.Split(',');
+            ulong _ulong;
+            Unsubscribe("OnTeamCreated");
+            RelationshipManager.PlayerTeam aTeam = RelationshipManager.ServerInstance.CreateTeam();
+            if (ulong.TryParse(teams[0], out _ulong))
+            {
+                if (playersinteams.Contains(_ulong))
+                {
+                    aTeam.teamLeader = player.userID;
+                }
+                else
+                {
+                    aTeam.teamLeader = _ulong;
+                }
+                for (int i = 1; i < teams.Length - 1; i++)
+                {
+                    string[] userdetails = teams[i].Split(new string[] { "<DN>" }, StringSplitOptions.None);
+                    if (!ulong.TryParse(userdetails[0], out _ulong)) { continue; }
+                    if (playersinteams.Contains(_ulong)) { Puts("Player already in another team"); continue; }
+                    playersinteams.Add(_ulong);
+                    if(_ulong == player.userID)
+                    {
+                        aTeam.AddPlayer(player);
+                    }
+                    else
+                    {
+                        BasePlayer bp = BasePlayer.FindAwakeOrSleeping(_ulong.ToString());
+                        if(bp == null)
+                        {
+                            bp = GameManager.server.CreateEntity("assets/prefabs/player/player.prefab").ToPlayer();
+                            bp.lifestate = BaseCombatEntity.LifeState.Dead;
+                            bp.ResetLifeStateOnSpawn = true;
+                            bp.SetFlag(BaseEntity.Flags.Protected, true);
+                            bp.Spawn();
+                            StartSleeping(bp);
+                            bp.CancelInvoke(player.KillMessage);
+                            bp.userID = _ulong;
+                            bp.UserIDString = _ulong.ToString();
+                            bp.displayName = userdetails[1];
+                            bp.eyeHistory.Clear();
+                            bp.lastTickTime = 0f;
+                            bp.lastInputTime = 0f;
+                            bp.stats.Init();
+                        }
+                        if (bp != null)
+                        {
+                            aTeam.AddPlayer(bp);
+                            playersinteams.Add(_ulong);
+                        }
+                    }
+                }
+            }
+            Subscribe("OnTeamCreated");
+        }
+
+
         private string getmodifiers(BasePlayer player)
         {
             //Build database of players current modifiers
@@ -1231,22 +1327,22 @@ namespace Oxide.Plugins
                     //Delay in these ones to allow car to be spawned
                     if (packets.Key.Contains("ModularCarEngine"))
                     {
-                        NextTick(() => { ProcessModuleParts(packets.Value, SpawnedCars, 0); });
+                        NextTick(() => { ProcessModuleParts(packets.Value, SpawnedCars); });
                         continue;
                     }
                     if (packets.Key.Contains("ModularCarStorage"))
                     {
-                        NextTick(() => { ProcessModuleParts(packets.Value, SpawnedCars, 1); });
+                        NextTick(() => { ProcessModuleParts(packets.Value, SpawnedCars); });
                         continue;
                     }
                     if (packets.Key.Contains("ModularCarCamper"))
                     {
-                        NextTick(() => { ProcessModuleParts(packets.Value, SpawnedCars, 2); });
+                        NextTick(() => { ProcessCamper(packets.Value, SpawnedCars); });
                         continue;
                     }
                     if (packets.Key.Contains("ModularCarBags"))
                     {
-                        NextTick(() => { ProcessModuleParts(packets.Value, SpawnedCars, int.Parse(packets.Key.Replace("ModularCarBags[", "").Replace("]", ""))); });
+                        NextTick(() => { ProcessCamper(packets.Value, SpawnedCars, packets.Key.Replace("ModularCarBags[", "").Replace("]", "")); });
                         continue;
                     }
                     if (packets.Key.Contains("ModularCar"))
@@ -1489,7 +1585,7 @@ namespace Oxide.Plugins
             return new Dictionary<string, BaseNetworkable>() { { settings.netid, horse } };
         }
 
-        private void ProcessModuleParts(List<Dictionary<string, string>> packets, Dictionary<string, ModularCar> SpawnedCars, int type)
+        private void ProcessCamper(List<Dictionary<string, string>> packets, Dictionary<string, ModularCar> SpawnedCars, string type = "null")
         {
             //Process module car parts
             string ownerid = "0";
@@ -1497,8 +1593,8 @@ namespace Oxide.Plugins
             float condition = 0;
             int amount = 0;
             ulong skinid = 0;
+            string container = "null";
             int code = 0;
-            int container = 0;
             foreach (Dictionary<string, string> i in packets)
             {
                 foreach (KeyValuePair<string, string> ii in i)
@@ -1509,7 +1605,9 @@ namespace Oxide.Plugins
 
                     switch (ii.Key)
                     {
-                        //Set bags up
+                        case "ownerid":
+                            ownerid = ii.Value;
+                            break;
                         case "bags":
                             if (SpawnedCars.ContainsKey(type.ToString()))
                             {
@@ -1551,7 +1649,129 @@ namespace Oxide.Plugins
                                     }
                                 }
                             }
-                            break; ;
+                            break;
+                        case "id":
+                            if (int.TryParse(ii.Value, out _int)) { id = _int; }
+                            break;
+                        case "condition":
+                            if (float.TryParse(ii.Value, out _float)) { condition = _float; }
+                            break;
+                        case "amount":
+                            if (int.TryParse(ii.Value, out _int)) { amount = _int; }
+                            break;
+                        case "skinid":
+                            if (ulong.TryParse(ii.Value, out _ulong)) { skinid = _ulong; }
+                            break;
+                        case "code":
+                            if (int.TryParse(ii.Value, out _int)) { code = _int; }
+                            break;
+                        case "container":
+                            container = ii.Value;
+                            break;
+                        case "slot":
+                            if (SpawnedCars.ContainsKey(ownerid))
+                            {
+                                if (int.TryParse(ii.Value, out _int))
+                                {
+                                    ModularCar mc = SpawnedCars[ownerid] as ModularCar;
+                                    if (mc != null)
+                                    {
+                                        foreach (var moduleEntity in mc.AttachedModuleEntities)
+                                        {
+                                            ItemContainer Inventory;
+                                            //    //Process camper module
+                                            VehicleModuleCamper vehicleModuleCamper = moduleEntity as VehicleModuleCamper;
+                                            if (vehicleModuleCamper != null)
+                                            {
+                                                Item item;
+                                                switch (container)
+
+                                                {
+                                                    case "0":
+                                                        //fill storage box
+                                                        Inventory = vehicleModuleCamper.activeStorage.Get(true).inventory;
+                                                        if (Inventory != null)
+                                                        {
+                                                            item = CreateItem(id, amount, skinid, condition, code);
+                                                            if (item != null)
+                                                            {
+                                                                if (!item.MoveToContainer(Inventory, _int, true, true))
+                                                                {
+                                                                    item.position = _int;
+                                                                    Inventory.Insert(item);
+                                                                }
+                                                                continue;
+                                                            }
+                                                        }
+                                                        break;
+                                                    case "1":
+                                                        //fill locker
+                                                        Inventory = vehicleModuleCamper.activeLocker.Get(true).inventory;
+                                                        if (Inventory != null)
+                                                        {
+                                                            item = CreateItem(id, amount, skinid, condition, code);
+                                                            if (item != null)
+                                                            {
+                                                                if (!item.MoveToContainer(Inventory, _int, true, true))
+                                                                {
+                                                                    item.position = _int;
+                                                                    Inventory.Insert(item);
+                                                                }
+                                                                continue;
+                                                            }
+                                                        }
+                                                        break;
+                                                    case "2":
+                                                        //Fill bbq
+                                                        Inventory = vehicleModuleCamper.activeBbq.Get(true).inventory;
+                                                        if (Inventory != null)
+                                                        {
+                                                            item = CreateItem(id, amount, skinid, condition, code);
+                                                            if (item != null)
+                                                            {
+                                                                if (!item.MoveToContainer(Inventory, _int, true, true))
+                                                                {
+                                                                    item.position = _int;
+                                                                    Inventory.Insert(item);
+                                                                }
+                                                                continue;
+                                                            }
+                                                        }
+                                                        break;
+                                                }
+                                                //Update entitys
+                                                vehicleModuleCamper.SendNetworkUpdateImmediate();
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            break;
+                    }
+                }
+            }
+        }
+
+        private void ProcessModuleParts(List<Dictionary<string, string>> packets, Dictionary<string, ModularCar> SpawnedCars, string type = "")
+        {
+            //Process module car parts
+            string ownerid = "0";
+            int id = 0;
+            float condition = 0;
+            int amount = 0;
+            ulong skinid = 0;
+            int code = 0;
+            int container = 0;
+            foreach (Dictionary<string, string> i in packets)
+            {
+                foreach (KeyValuePair<string, string> ii in i)
+                {
+                    int _int;
+                    float _float;
+                    ulong _ulong;
+
+                    switch (ii.Key)
+                    {
                         case "ownerid":
                             ownerid = ii.Value;
                             break;
@@ -1582,122 +1802,60 @@ namespace Oxide.Plugins
                                     ModularCar mc = SpawnedCars[ownerid] as ModularCar;
                                     if (mc != null)
                                     {
+                                        int s = 0;
                                         foreach (var moduleEntity in mc.AttachedModuleEntities)
                                         {
+                                            if (s != container) { s++; continue; }
+                                            s++;
                                             ItemContainer Inventory;
-                                            switch (type)
+                                            VehicleModuleEngine vehicleModuleEngine = moduleEntity as VehicleModuleEngine;
+                                            if (vehicleModuleEngine != null)
                                             {
-                                                //Apply engine parts
-                                                case 0:
-                                                    VehicleModuleEngine vehicleModuleEngine = moduleEntity as VehicleModuleEngine;
-                                                    if (vehicleModuleEngine != null)
+                                                Inventory = vehicleModuleEngine.GetContainer()?.inventory;
+                                                if (Inventory != null)
+                                                {
+                                                    Item item = CreateItem(id, amount, skinid, condition, code);
+                                                    if (item != null)
                                                     {
-                                                        Inventory = vehicleModuleEngine.GetContainer()?.inventory;
-                                                        if (Inventory != null)
+                                                        if (!item.MoveToContainer(Inventory, _int, true, true))
                                                         {
-                                                            Item item = CreateItem(id, amount, skinid, condition, code);
-                                                            if (item != null)
-                                                            {
-                                                                if (!item.MoveToContainer(Inventory, _int, true, true))
-                                                                {
-                                                                        item.position = _int;
-                                                                        Inventory.Insert(item);
-                                                                }
-                                                            }
+                                                            item.position = _int;
+                                                            Inventory.Insert(item);
                                                         }
                                                     }
-                                                    break;
-                                                //Fill stoage with items
-                                                case 1:
-                                                    VehicleModuleStorage vehicleModuleStorage = moduleEntity as VehicleModuleStorage;
-                                                    if (vehicleModuleStorage != null)
-                                                    {
-                                                        Inventory = vehicleModuleStorage.GetContainer()?.inventory;
-                                                        if (Inventory != null)
-                                                        {
-                                                            Item item = CreateItem(id, amount, skinid, condition, code);
-                                                            if (item != null)
-                                                            {
-                                                                if (!item.MoveToContainer(Inventory, _int, true, true))
-                                                                {
-                                                                        item.position = _int;
-                                                                        Inventory.Insert(item);
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                    break;
-                                                //Process camper module
-                                                case 2:
-                                                    VehicleModuleCamper vehicleModuleCamper = moduleEntity as VehicleModuleCamper;
-
-                                                    if (vehicleModuleCamper != null)
-                                                    {
-                                                        Item item;
-                                                        switch (container)
-                                                        {
-                                                            //fill storage box
-                                                            case 0:
-                                                                Inventory = vehicleModuleCamper.activeStorage.Get(true).inventory;
-                                                                if (Inventory != null)
-                                                                {
-                                                                    item = CreateItem(id, amount, skinid, condition, code);
-                                                                    if (item != null)
-                                                                    {
-                                                                        if (!item.MoveToContainer(Inventory, _int, true, true))
-                                                                        {
-                                                                                item.position = _int;
-                                                                                Inventory.Insert(item);
-                                                                        }
-                                                                    }
-                                                                }
-                                                                break;
-                                                            case 1:
-                                                                //fill locker
-                                                                Inventory = vehicleModuleCamper.activeLocker.Get(true).inventory;
-                                                                if (Inventory != null)
-                                                                {
-                                                                    item = CreateItem(id, amount, skinid, condition, code);
-                                                                    if (item != null)
-                                                                    {
-                                                                        if (!item.MoveToContainer(Inventory, _int, true, true))
-                                                                        {
-                                                                                item.position = _int;
-                                                                                Inventory.Insert(item);
-                                                                        }
-                                                                    }
-                                                                }
-                                                                break;
-                                                            case 2:
-                                                                //Fill bbq
-                                                                Inventory = vehicleModuleCamper.activeBbq.Get(true).inventory;
-                                                                if (Inventory != null)
-                                                                {
-                                                                    item = CreateItem(id, amount, skinid, condition, code);
-                                                                    if (item != null)
-                                                                    {
-                                                                        if (!item.MoveToContainer(Inventory, _int, true, true))
-                                                                        {
-                                                                                item.position = _int;
-                                                                                Inventory.Insert(item);
-                                                                        }
-                                                                    }
-                                                                }
-                                                                break;
-                                                        }
-                                                        //Update entitys
-                                                        vehicleModuleCamper.SendNetworkUpdateImmediate();
-                                                    }
-                                                    break;
+                                                }
+                                                continue;
                                             }
+                                            //Fill stoage with items
+                                            VehicleModuleStorage vehicleModuleStorage = moduleEntity as VehicleModuleStorage;
+                                            if (vehicleModuleStorage != null)
+                                            {
+                                                Inventory = vehicleModuleStorage.GetContainer()?.inventory;
+                                                if (Inventory != null)
+                                                {
+                                                    Item item = CreateItem(id, amount, skinid, condition, code);
+                                                    if (item != null)
+                                                    {
+                                                        if (!item.MoveToContainer(Inventory, _int, true, true))
+                                                        {
+                                                            item.position = _int;
+                                                            Inventory.Insert(item);
+                                                        }
+                                                    }
+                                                }
+                                                continue;
+                                            }
+
                                         }
                                     }
                                 }
                             }
+
                             break;
                     }
                 }
             }
+
         }
 
         private Dictionary<string, BaseNetworkable> ProcessBasePlayer(List<Dictionary<string, string>> packets, BaseEntity FerryPos)
@@ -1758,6 +1916,7 @@ namespace Oxide.Plugins
                 player.TransformChanged();
                 setblueprints(player, settings.blueprints);
                 setmodifiers(player, settings.mods);
+                setteams(player, settings.team);
                 player.SendNetworkUpdateImmediate();
                 if (config._ServerSettings.ShowDebugMsg) Puts("ProcessBasePlayer Setting ready flag for player to transition");
                 plugin.UpdatePlayers(plugin.thisserverip + ":" + plugin.thisserverport, plugin.thisserverip + ":" + plugin.thisserverport, "Ready", settings.steamid.ToString());
@@ -2326,7 +2485,7 @@ namespace Oxide.Plugins
                 //Create packet of engine parts
                 if (vehicleModuleEngine != null)
                 {
-                    data.Add("ModularCarEngine[" + vehicleModuleEngine.net.ID.ToString() + "]", ModularItems(vehicleModuleEngine.GetContainer().inventory, thiscarID, socket.ToString()));
+                    data.Add("ModularCarEngine[" + vehicleModuleEngine.net.ID.ToString() + "]", ModularItems(vehicleModuleEngine.GetContainer().inventory, thiscarID, socket++.ToString()));
                     continue;
                 }
 
@@ -2334,7 +2493,7 @@ namespace Oxide.Plugins
                 if (vehicleModuleStorage != null)
                 {
                     //create packet of storage box items
-                        data.Add("ModularCarStorage[" + vehicleModuleStorage.net.ID.ToString() + "]", ModularItems(vehicleModuleStorage.GetContainer().inventory, thiscarID, socket.ToString()));
+                        data.Add("ModularCarStorage[" + vehicleModuleStorage.net.ID.ToString() + "]", ModularItems(vehicleModuleStorage.GetContainer().inventory, thiscarID, socket++.ToString()));
                         continue;
                 }
                 VehicleModuleCamper vehicleModuleCamper = moduleEntity as VehicleModuleCamper;
@@ -2394,7 +2553,6 @@ namespace Oxide.Plugins
                     if (itemlist.Count != 0) { data.Add("ModularCarBags[" + car.net.ID.ToString() + "]", itemlist); }
                     donebags = true;
                 }
-                socket++;
             }
         }
 
@@ -2484,6 +2642,7 @@ namespace Oxide.Plugins
                         { "calories", baseplayer.metabolism.calories.value.ToString() },
                         { "blueprints", getblueprints(baseplayer) },
                         { "modifiers", getmodifiers(baseplayer) },
+                        { "team", getteams(baseplayer) },
                         { "seat", seat.ToString() },
                         { "mounted", baseplayer.isMounted.ToString() }
                         };
@@ -2869,6 +3028,7 @@ namespace Oxide.Plugins
             public string steamid = "";
             public string name = "";
             public float hydration = 0;
+            public string team = "";
             public float calories = 0;
             public bool mounted = false;
             public int seat = 0;
@@ -2956,6 +3116,9 @@ namespace Oxide.Plugins
                                 break;
                             case "blueprints":
                                 blueprints = ii.Value.Split('|');
+                                break;
+                            case "team":
+                                team = ii.Value;
                                 break;
                             case "modifiers":
                                 mods = ii.Value.Split('_');
