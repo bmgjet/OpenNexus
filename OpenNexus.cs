@@ -1,23 +1,7 @@
 //None of this code is to be used in any paid project/plugins
 
-//Hooks: (Are called before compression has been added to string)
-//OnOpenNexusRead(string packet)   return string to replace packet, Return bool to cancel function.
-//OnOpenNexusWrite(string packet)   return string to replace packet, Return bool to cancel function.
-
-//Bugs:
-
 //ToDo:
-//Teams (Need to test)
-//Clean up and optimise
 //Run though every item to again to check for bugs.
-
-//Setting Up Dock On Map
-//Make Custom Prefab group and name it SERVER=ipaddress,PORT=portnumber,name
-//Make sure to tick Convert selection into group.
-//And you might want to place a safezone on it since there isnt one there by default as of AUX01
-//If you want to use NexusIsland, Place it on the very edge of the map based of its gizmo not what it looks like. Rotate it as needed
-//Dont place the ferry prefab.
-
 using Facepunch;
 using Facepunch.Utility;
 using Network;
@@ -33,6 +17,7 @@ using Rust;
 using Oxide.Core.Plugins;
 using Newtonsoft.Json;
 using UnityEngine.AI;
+using System.Linq;
 
 namespace Oxide.Plugins
 {
@@ -40,12 +25,10 @@ namespace Oxide.Plugins
     [Description("Nexus system created by bmgjet")]
     public class OpenNexus : RustPlugin
     {
-        //Advanced Settings
         private string thisserverip = "";        //Over-ride auto detected ip
         private string thisserverport = "";      //Over-ride auto detected port
         //Vehicle to apply edge protection too (no point doing cars ect since they will sink before they get there)
         private string[] BaseVehicle = { "rowboat", "rhib", "scraptransporthelicopter", "minicopter.entity", "submarinesolo.entity", "submarineduo.entity" };
-        //End Settings
 
         //Permissions
         private static readonly string permbypass = "OpenNexus.bypass"; //bypass the single server at a time limit
@@ -177,7 +160,6 @@ namespace Oxide.Plugins
         #endregion
 
         #region Commands
-
         //Chat command to paste where admin is a transfered packet
         //Command /OpenNexus.Paste $PacketID
         [ChatCommand("OpenNexus.Paste")]
@@ -195,7 +177,6 @@ namespace Oxide.Plugins
             }
             int packetid = int.Parse(args[0]);
             player.ChatMessage("Pasting Packet " + args[0]);
-
             //Do Read Of Packet
             MySQLRead("", null, packetid, player);
         }
@@ -217,16 +198,7 @@ namespace Oxide.Plugins
                  timer.Once(config._ServerSettings.ServerDelay, () =>
                   {
                       //Reset players data
-                      foreach (BasePlayer bp in BasePlayer.activePlayerList)
-                      {
-                          if (bp.IsConnected && !bp.IsNpc)
-                          {
-                              NextTick(() =>
-                              {
-                                  UpdatePlayers(thisserverip + ":" + thisserverport, thisserverip + ":" + thisserverport, "Playing", bp.UserIDString);
-                              });
-                          }
-                      }
+                      foreach (BasePlayer bp in BasePlayer.activePlayerList){if (bp.IsConnected && !bp.IsNpc){NextTick(() =>{UpdatePlayers(thisserverip + ":" + thisserverport, thisserverip + ":" + thisserverport, "Playing", bp.UserIDString);});}}
                   });
              });
         }
@@ -242,7 +214,7 @@ namespace Oxide.Plugins
             }
             Configuration oldconfig = config;
             config = Config.ReadObject<Configuration>();
-            if(oldconfig != config)
+            if (oldconfig != config)
             {
                 player.ChatMessage("Loaded changes, Not all settings will take effect with out a restart of plugin.");
                 player.ChatMessage("You can restart plugin with /oxide.reload OpenNexus");
@@ -273,7 +245,7 @@ namespace Oxide.Plugins
                 player.ChatMessage("You dont have OpenNexus.admin Perm!");
                 return;
             }
-            if(config._ServerSettings.ShowDebugMsg)
+            if (config._ServerSettings.ShowDebugMsg)
             {
                 config._ServerSettings.ShowDebugMsg = false;
                 player.ChatMessage("Debug messages disabled.");
@@ -338,13 +310,7 @@ namespace Oxide.Plugins
                     foreach (BasePlayer bp in KillBots) { if (!Bots.Contains(bp) && !bp.IsNpc) { Bots.Add(bp); } }
                     Vis.Entities<BasePlayer>(OpenFerry.transform.position + (OpenFerry.transform.rotation * Vector3.forward * -12), 14f, KillBots);
                     foreach (BasePlayer bp in KillBots) { if (!Bots.Contains(bp) && !bp.IsNpc) { Bots.Add(bp); } }
-                    foreach (BasePlayer bot in Bots)
-                    {
-                        if (!IsSteamId(bot.UserIDString))
-                        {
-                            bot.Kill();
-                        }
-                    }
+                    foreach (BasePlayer bot in Bots){if (!IsSteamId(bot.UserIDString)){bot.Kill();}}
                     if (config._ServerSettings.ShowDebugMsg) plugin.Puts("Read " + String.Format("{0:0.##}", (double)(entry["data"].ToString().Length / 1024f)) + " Kb");
                     return;
                 }
@@ -475,17 +441,9 @@ namespace Oxide.Plugins
         private void ConnectToMysql(string host, int port, string database, string username, string password)
         {
             sqlConnection = sqlLibrary.OpenDb(host, port, database, username, password, this);
-            if (sqlConnection == null || sqlConnection.Con == null)
-            {
-                //Failed message
-                Puts("Couldn't open the MySQL Database: {0} ", sqlConnection.Con.State.ToString());
-            }
-            else
-            {
-                //Connected message and create tables if they dont exsist.
-                Puts("MySQL server connected: " + host);
-                CreatesTables();
-            }
+            // Failed message
+            if (sqlConnection == null || sqlConnection.Con == null){Puts("Couldn't open the MySQL Database: {0} ", sqlConnection.Con.State.ToString());}
+            else{Puts("MySQL server connected: " + host);CreatesTables();}
         }
 
         private void CreatesTables()
@@ -512,7 +470,7 @@ namespace Oxide.Plugins
             //Connect to database
             ConnectToMysql(config._ServerSettings.MySQLHost, config._ServerSettings.MySQLPort, config._ServerSettings.MySQLDB, config._ServerSettings.MySQLUsername, config._ServerSettings.MySQLPassword);
             //Get Weather data
-            climate = SingletonComponent<global::Climate>.Instance;
+            climate = SingletonComponent<Climate>.Instance;
             //Get world size for teleport zoning
             if (config._ServerSettings.EdgeTeleporter)
             {
@@ -541,13 +499,9 @@ namespace Oxide.Plugins
 
         private void OnWorldPrefabSpawned(GameObject gameObject, string str)
         {
-            //Remove Uncoded NexusFerry
+            //Remove Uncoded NexusFerry / NexusIsland
             BaseEntity component = gameObject.GetComponent<BaseEntity>();
-            if (component != null)
-            {
-                //NexusFerry / NexusIsland
-                if ((component.prefabID == 2508295857 || component.prefabID == 2795004596) && component.OwnerID == 0) { component.Kill(); }
-            }
+            if (component != null){if ((component.prefabID == 2508295857 || component.prefabID == 2795004596) && component.OwnerID == 0) { component.Kill(); }}
         }
 
         private void OnPlayerSetInfo(Network.Connection connection, string name, string value)
@@ -588,10 +542,7 @@ namespace Oxide.Plugins
                     if (Ferry != null)
                     {
                         //Dissconnect database
-                        if (sqlConnection != null && sqlConnection.Con != null)
-                        {
-                               sqlLibrary.CloseDb(sqlConnection);
-                        }
+                        if (sqlConnection != null && sqlConnection.Con != null){sqlLibrary.CloseDb(sqlConnection);}
                         //Updates ferry contents list and ejects it to dock.
                         Ferry.UpdateDockedEntitys();
                         EjectEntitys(Ferry.GetFerryContents(), Ferry.DockedEntitys, Ferry.EjectionZone.position);
@@ -632,12 +583,8 @@ namespace Oxide.Plugins
             {
                 try
                 {
-                    if (Rust.Application.isLoading)
-                    {
-                        //Still starting so run a timer again in 10 sec to check.
-                        Fstartup();
-                        return;
-                    }
+                    //Still starting so run a timer again in 10 sec to check.
+                    if (Rust.Application.isLoading){Fstartup();return;}
                 }
                 catch { }
                 //Starup script now.
@@ -645,6 +592,7 @@ namespace Oxide.Plugins
             });
         }
 
+        //Set IP and port of ferry from prefab name
         private void SetFerryIPs(OpenNexusFerry OpenFerry, string[] FerrySettings)
         {
             foreach (string setting in FerrySettings)
@@ -734,7 +682,6 @@ namespace Oxide.Plugins
             //Add edge teleport
             if (config._ServerSettings.EdgeTeleporter) { foreach (BaseNetworkable vehicle in BaseNetworkable.serverEntities) { if (vehicle is BaseVehicle && vehicle.GetComponent<EdgeTeleport>() == null) vehicle.gameObject.AddComponent<EdgeTeleport>(); } }
         }
-
         #endregion
 
         #region functions
@@ -891,11 +838,8 @@ namespace Oxide.Plugins
         #endregion
 
         #region DatabaseFunctions
-        private string getclimate()
-        {
-            //Build database of current time/weather
-            return (TOD_Sky.Instance.Cycle.Year) + "|" + (TOD_Sky.Instance.Cycle.Month) + "|" + (TOD_Sky.Instance.Cycle.Day) + "|" + (TOD_Sky.Instance.Cycle.Hour) + "|" + (climate.WeatherState.Atmosphere.Brightness.ToString()) + "|" + (climate.WeatherState.Atmosphere.Contrast.ToString()) + "|" + (climate.WeatherState.Atmosphere.Directionality.ToString()) + "|" + (climate.WeatherState.Atmosphere.MieMultiplier.ToString()) + "|" + (climate.WeatherState.Atmosphere.RayleighMultiplier.ToString()) + "|" + (climate.WeatherState.Clouds.Attenuation.ToString()) + "|" + (climate.WeatherState.Clouds.Brightness.ToString()) + "|" + (climate.WeatherState.Clouds.Coloring.ToString()) + "|" + (climate.WeatherState.Clouds.Coverage.ToString()) + "|" + (climate.WeatherState.Clouds.Opacity.ToString()) + "|" + (climate.WeatherState.Clouds.Saturation.ToString()) + "|" + (climate.WeatherState.Clouds.Scattering.ToString()) + "|" + (climate.WeatherState.Clouds.Sharpness.ToString()) + "|" + (climate.WeatherState.Clouds.Size.ToString()) + "|" + (climate.Weather.DustChance.ToString()) + "|" + (climate.WeatherState.Atmosphere.Fogginess.ToString()) + "|" + (climate.Weather.FogChance.ToString()) + "|" + (climate.Weather.OvercastChance.ToString()) + "|" + (climate.WeatherState.Rain.ToString()) + "|" + (climate.Weather.RainChance.ToString()) + "|" + (climate.WeatherState.Rainbow.ToString()) + "|" + (climate.Weather.StormChance.ToString()) + "|" + (climate.WeatherState.Thunder.ToString()) + "|" + (climate.WeatherState.Wind.ToString()) + "|"; ;
-        }
+        //Build database of current time/weather
+        private string getclimate() { return (TOD_Sky.Instance.Cycle.Year) + "|" + (TOD_Sky.Instance.Cycle.Month) + "|" + (TOD_Sky.Instance.Cycle.Day) + "|" + (TOD_Sky.Instance.Cycle.Hour) + "|" + (climate.WeatherState.Atmosphere.Brightness.ToString()) + "|" + (climate.WeatherState.Atmosphere.Contrast.ToString()) + "|" + (climate.WeatherState.Atmosphere.Directionality.ToString()) + "|" + (climate.WeatherState.Atmosphere.MieMultiplier.ToString()) + "|" + (climate.WeatherState.Atmosphere.RayleighMultiplier.ToString()) + "|" + (climate.WeatherState.Clouds.Attenuation.ToString()) + "|" + (climate.WeatherState.Clouds.Brightness.ToString()) + "|" + (climate.WeatherState.Clouds.Coloring.ToString()) + "|" + (climate.WeatherState.Clouds.Coverage.ToString()) + "|" + (climate.WeatherState.Clouds.Opacity.ToString()) + "|" + (climate.WeatherState.Clouds.Saturation.ToString()) + "|" + (climate.WeatherState.Clouds.Scattering.ToString()) + "|" + (climate.WeatherState.Clouds.Sharpness.ToString()) + "|" + (climate.WeatherState.Clouds.Size.ToString()) + "|" + (climate.Weather.DustChance.ToString()) + "|" + (climate.WeatherState.Atmosphere.Fogginess.ToString()) + "|" + (climate.Weather.FogChance.ToString()) + "|" + (climate.Weather.OvercastChance.ToString()) + "|" + (climate.WeatherState.Rain.ToString()) + "|" + (climate.Weather.RainChance.ToString()) + "|" + (climate.WeatherState.Rainbow.ToString()) + "|" + (climate.Weather.StormChance.ToString()) + "|" + (climate.WeatherState.Thunder.ToString()) + "|" + (climate.WeatherState.Wind.ToString()) + "|"; }
 
         private void setclimate()
         {
@@ -943,6 +887,7 @@ namespace Oxide.Plugins
             });
         }
 
+        //Create team info
         private string getteams(BasePlayer player)
         {
             string teams = "";
@@ -950,69 +895,50 @@ namespace Oxide.Plugins
             {
                 foreach (var playerTeam in RelationshipManager.ServerInstance.teams.Values)
                 {
-                    if(playerTeam.teamID == 0UL || !playerTeam.teamLeader.IsSteamId() || playerTeam.members.IsNullOrEmpty()) continue;
+                    if (playerTeam.teamID == 0UL || !playerTeam.teamLeader.IsSteamId() || playerTeam.members.IsNullOrEmpty()) continue;
                     if (playerTeam.members.Contains(player.userID))
                     {
                         teams += playerTeam.teamLeader.ToString() + ",";
                         foreach (ulong p in playerTeam.members)
                         {
-                            teams += p.ToString() + "<DN>" + BasePlayer.FindAwakeOrSleeping(p.ToString()).displayName + ",";
+                            try{teams += p.ToString() + "<DN>" + BasePlayer.FindAwakeOrSleeping(p.ToString()).displayName + ",";}catch { }
                         }
                     }
                 }
             }
-            Puts(teams);
             return teams;
         }
 
+        //Restore team info
         private void setteams(BasePlayer player, string teamdata)
         {
-            if(teamdata == null || teamdata == "") { return; }
+            if (teamdata == null || teamdata == "") { return; }
             List<ulong> playersinteams = new List<ulong>();
             bool alreadyinteam = false;
             foreach (var playerTeam in RelationshipManager.ServerInstance.teams.Values)
             {
-                foreach (ulong p in playerTeam.members)
-                {
-                    playersinteams.Add(p);
-                }
-                if (playerTeam.members.Contains(player.userID))
-                {
-                    alreadyinteam = true;
-                }
+                foreach (ulong p in playerTeam.members){playersinteams.Add(p);}
+                if (playerTeam.members.Contains(player.userID)){alreadyinteam = true;}
             }
-            if (alreadyinteam)
-            {
-                return; 
-            }
+            if (alreadyinteam){return;}
             string[] teams = teamdata.Split(',');
             ulong _ulong;
             Unsubscribe("OnTeamCreated");
             RelationshipManager.PlayerTeam aTeam = RelationshipManager.ServerInstance.CreateTeam();
             if (ulong.TryParse(teams[0], out _ulong))
             {
-                if (playersinteams.Contains(_ulong))
-                {
-                    aTeam.teamLeader = player.userID;
-                }
-                else
-                {
-                    aTeam.teamLeader = _ulong;
-                }
+                if (playersinteams.Contains(_ulong)){aTeam.teamLeader = player.userID;}
+                else{aTeam.teamLeader = _ulong;}
                 for (int i = 1; i < teams.Length - 1; i++)
                 {
                     string[] userdetails = teams[i].Split(new string[] { "<DN>" }, StringSplitOptions.None);
                     if (!ulong.TryParse(userdetails[0], out _ulong)) { continue; }
                     if (playersinteams.Contains(_ulong)) { Puts("Player already in another team"); continue; }
                     playersinteams.Add(_ulong);
-                    if(_ulong == player.userID)
-                    {
-                        aTeam.AddPlayer(player);
-                    }
-                    else
-                    {
+                    if (_ulong == player.userID){aTeam.AddPlayer(player);}
+                    else{
                         BasePlayer bp = BasePlayer.FindAwakeOrSleeping(_ulong.ToString());
-                        if(bp == null)
+                        if (bp == null)
                         {
                             bp = GameManager.server.CreateEntity("assets/prefabs/player/player.prefab").ToPlayer();
                             bp.lifestate = BaseCombatEntity.LifeState.Dead;
@@ -1040,18 +966,11 @@ namespace Oxide.Plugins
             Subscribe("OnTeamCreated");
         }
 
-
         private string getmodifiers(BasePlayer player)
         {
             //Build database of players current modifiers
             string mods = "";
-            if (player != null)
-            {
-                foreach (Modifier m in player.modifiers.All)
-                {
-                    mods += (m.Type.ToString()) + "," + (m.Source.ToString()) + "," + (m.Value.ToString()) + "," + (m.Duration.ToString()) + "," + (m.TimeRemaining.ToString()) + "|";
-                }
-            }
+            if (player != null) { foreach (Modifier m in player.modifiers.All) { mods += (m.Type.ToString()) + "," + (m.Source.ToString()) + "," + (m.Value.ToString()) + "," + (m.Duration.ToString()) + "," + (m.TimeRemaining.ToString()) + "|"; } }
             return mods;
         }
 
@@ -1137,7 +1056,7 @@ namespace Oxide.Plugins
             var fuelContainer = target?.GetFuelSystem()?.GetFuelContainer()?.inventory;
             if (fuelContainer != null)
             {
-                var lowgrade = ItemManager.CreateByItemID(-946369541, amount);
+                Item lowgrade = ItemManager.CreateByItemID(-946369541, amount);
                 if (!lowgrade.MoveToContainer(fuelContainer)) { lowgrade.Remove(); }
             }
         }
@@ -1164,6 +1083,21 @@ namespace Oxide.Plugins
             bv.TransformChanged();
             bv.SendNetworkUpdateImmediate();
         }
+
+        private void MoveItems(BaseSettings settings, ItemContainer Inventory)
+        {
+            //trys to move into container position other wise force inserts into position
+            if (settings == null || Inventory == null) return;
+            Item item = CreateItem(settings.id, settings.amount, settings.skinid, settings.condition, settings.code);
+            if (item != null)
+            {
+                if (!item.MoveToContainer(Inventory, settings.slot, true, true))
+                {
+                    item.position = settings.slot;
+                    Inventory.Insert(item);
+                }
+            }
+        }
         #endregion
 
         #region DataProcessing
@@ -1177,11 +1111,11 @@ namespace Oxide.Plugins
             {
                 object injection = Interface.CallHook("OnOpenNexusRead", packet);
                 if (injection is string) { packet = injection as string; }
-                else if(injection is bool) { return null; }
+                else if (injection is bool) { return null; }
                 //Mark Packet as read
                 MySQLWrite("", "", "", id, 1);
                 BasePlayer admin = null;
-                if (parent is BasePlayer){admin = parent as BasePlayer;}
+                if (parent is BasePlayer) { admin = parent as BasePlayer; }
                 //Hold variables for cars
                 Dictionary<string, ModularCar> SpawnedCars = new Dictionary<string, ModularCar>();
                 //Deserilize from webpacket
@@ -1231,7 +1165,8 @@ namespace Oxide.Plugins
                         }
                         if (packets.Key.Contains("BasePlayerInventory"))
                         {
-                            ProcessItems(packets.Value, CreatedEntitys);
+                            BaseSettings settings = new BaseSettings();
+                            settings.ProcessPacket(packets.Value, null, "null", 3, null, CreatedEntitys);
                             continue;
                         }
                         if (packets.Key.Contains("BasePlayer"))
@@ -1309,7 +1244,8 @@ namespace Oxide.Plugins
                     }
                     if (packets.Key.Contains("BaseHorseInventory"))
                     {
-                        ProcessItems(packets.Value, CreatedEntitys);
+                          BaseSettings settings = new BaseSettings();
+                        settings.ProcessPacket(packets.Value, null, "null", 3, null, CreatedEntitys);
                         continue;
                     }
                     if (packets.Key.Contains("BaseHorse"))
@@ -1324,25 +1260,23 @@ namespace Oxide.Plugins
                         }
                         continue;
                     }
-                    //Delay in these ones to allow car to be spawned
-                    if (packets.Key.Contains("ModularCarEngine"))
+                    if (packets.Key.Contains("ModularCarItems"))
                     {
-                        NextTick(() => { ProcessModuleParts(packets.Value, SpawnedCars); });
-                        continue;
-                    }
-                    if (packets.Key.Contains("ModularCarStorage"))
-                    {
-                        NextTick(() => { ProcessModuleParts(packets.Value, SpawnedCars); });
+                        //Delay in these ones to allow car to be spawned
+                        NextTick(() => {
+                            //Process module car parts
+                            BaseSettings settings = new BaseSettings();
+                            settings.ProcessPacket(packets.Value, SpawnedCars, "null",1);
+                        });
                         continue;
                     }
                     if (packets.Key.Contains("ModularCarCamper"))
                     {
-                        NextTick(() => { ProcessCamper(packets.Value, SpawnedCars); });
-                        continue;
-                    }
-                    if (packets.Key.Contains("ModularCarBags"))
-                    {
-                        NextTick(() => { ProcessCamper(packets.Value, SpawnedCars, packets.Key.Replace("ModularCarBags[", "").Replace("]", "")); });
+                        NextTick(() => {             
+                            //Process camper module
+                            BaseSettings settings = new BaseSettings();
+                            settings.ProcessPacket(packets.Value, SpawnedCars, "null", 0);
+                        });
                         continue;
                     }
                     if (packets.Key.Contains("ModularCar"))
@@ -1359,10 +1293,7 @@ namespace Oxide.Plugins
                     }
                 }
                 //Max out retry counter to end retrying
-                if (parent is OpenNexusFerry)
-                {
-                    (parent as OpenNexusFerry).retrys = 99;
-                }
+                if (parent is OpenNexusFerry){(parent as OpenNexusFerry).retrys = 99;}
             }
             //Return list of everything created.
             return CreatedEntitys;
@@ -1464,7 +1395,7 @@ namespace Oxide.Plugins
             ////Delay to allow modules to be spawned
             NextTick(() =>
             {
-                //    //Apply custom modules health
+                //Apply custom modules health
                 int cond = 0;
                 foreach (BaseVehicleModule vm in car.AttachedModuleEntities)
                 {
@@ -1474,8 +1405,49 @@ namespace Oxide.Plugins
                     if (success) { vm.health = health; } else { vm.health = 50f; }
                     //Apply unlimited fuel
                     VehicleModuleEngine vme = vm as VehicleModuleEngine;
-                if (settings.unlimitedfuel && vme != null) { vme.engine.idleFuelPerSec = 0; vme.engine.maxFuelPerSec = 0; }
-            }
+                    if (settings.unlimitedfuel && vme != null) { vme.engine.idleFuelPerSec = 0; vme.engine.maxFuelPerSec = 0; }
+                }
+                if (car != null)
+                {
+                    List<SleepingBag> Bags = new List<SleepingBag>();
+                    foreach (BaseEntity baseEntity in car.children)
+                    {
+                        if (baseEntity == null) continue;
+                        foreach (BaseEntity baseEntity2 in baseEntity.children)
+                        {
+                            if (baseEntity2 == null) continue;
+                            SleepingBag sleepingBagCamper;
+                            if ((sleepingBagCamper = (baseEntity2 as SleepingBag)) != null)
+                            {
+                                Bags.Add(sleepingBagCamper);
+                            }
+                        }
+                    }
+                    //Fix for bags owners and name
+                    if (Bags.Count != 0)
+                    {
+                        ulong _ulong;
+                        string[] BagData = settings.bags.Split(new string[] { "<bag>" }, StringSplitOptions.None);
+                        if (BagData != null && BagData.Length != 0)
+                        {
+                            int bagmodded = 0;
+                            foreach (string bag in BagData)
+                            {
+                                string[] data = bag.Split(new string[] { "<uid>" }, StringSplitOptions.None);
+                                if (data.Length == 2)
+                                {
+                                    if (Bags.Count > bagmodded)
+                                    {
+                                        if (ulong.TryParse(data[1], out _ulong)) { Bags[bagmodded].deployerUserID = _ulong; }
+                                        Bags[bagmodded].niceName = data[0];
+                                        Bags[bagmodded].SendNetworkUpdate(BasePlayer.NetworkQueue.Update);
+                                        bagmodded++;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             });
             ApplySettings(car, parent, settings.health, settings.maxhealth, settings.fuel, settings.ownerid, settings.pos, settings.rot);
             return new Dictionary<string, ModularCar>() { { settings.netid, car } };
@@ -1488,25 +1460,25 @@ namespace Oxide.Plugins
             {
                 foreach (ModuleData md in CarModules.ToArray())
                 {
-                        //Attach each module
-                        for (int i = 0; i < md.modules.Count; i++)
+                    //Attach each module
+                    for (int i = 0; i < md.modules.Count; i++)
+                    {
+                        Rust.Modular.ItemModVehicleModule itemModVehicleModule = md.modules[i];
+                        if (itemModVehicleModule != null && car.Inventory.SocketsAreFree(i, itemModVehicleModule.socketsTaken, null))
                         {
-                            Rust.Modular.ItemModVehicleModule itemModVehicleModule = md.modules[i];
-                            if (itemModVehicleModule != null && car.Inventory.SocketsAreFree(i, itemModVehicleModule.socketsTaken, null))
-                            {
-                                itemModVehicleModule.doNonUserSpawn = true;
-                                Item item = ItemManager.Create(itemModVehicleModule.GetComponent<ItemDefinition>(), 1, 0UL);
-                                item.condition = item.maxCondition * md.condition[i];
-                                if (!car.TryAddModule(item)) { item.Remove(0f); }
-                            }
+                            itemModVehicleModule.doNonUserSpawn = true;
+                            Item item = ItemManager.Create(itemModVehicleModule.GetComponent<ItemDefinition>(), 1, 0UL);
+                            item.condition = item.maxCondition * md.condition[i];
+                            if (!car.TryAddModule(item)) { item.Remove(0f); }
                         }
-                        //remove from list since its done
-                        CarModules.Remove(md);
-                        //Call hook for any other plugins that use it.
-                        Interface.CallHook("OnVehicleModulesAssigned", this, CarModules);
-                        //Stop rest of default random spawn function.
-                        return true;
                     }
+                    //remove from list since its done
+                    CarModules.Remove(md);
+                    //Call hook for any other plugins that use it.
+                    Interface.CallHook("OnVehicleModulesAssigned", this, CarModules);
+                    //Stop rest of default random spawn function.
+                    return true;
+                }
             }
             //Normal random modules spawn
             return null;
@@ -1585,278 +1557,73 @@ namespace Oxide.Plugins
             return new Dictionary<string, BaseNetworkable>() { { settings.netid, horse } };
         }
 
-        private void ProcessCamper(List<Dictionary<string, string>> packets, Dictionary<string, ModularCar> SpawnedCars, string type = "null")
+        private void ProcessCamper(Dictionary<string, ModularCar> SpawnedCars, BaseSettings settings)
         {
-            //Process module car parts
-            string ownerid = "0";
-            int id = 0;
-            float condition = 0;
-            int amount = 0;
-            ulong skinid = 0;
-            string container = "null";
-            int code = 0;
-            foreach (Dictionary<string, string> i in packets)
+            if (SpawnedCars.ContainsKey(settings.ownerid.ToString()))
             {
-                foreach (KeyValuePair<string, string> ii in i)
+                ModularCar mc = SpawnedCars[settings.ownerid.ToString()] as ModularCar;
+                if (mc != null)
                 {
-                    int _int;
-                    float _float;
-                    ulong _ulong;
-
-                    switch (ii.Key)
+                    foreach (var moduleEntity in mc.AttachedModuleEntities)
                     {
-                        case "ownerid":
-                            ownerid = ii.Value;
-                            break;
-                        case "bags":
-                            if (SpawnedCars.ContainsKey(type.ToString()))
+                        VehicleModuleCamper vehicleModuleCamper = moduleEntity as VehicleModuleCamper;
+                        if (vehicleModuleCamper != null)
+                        {
+                            switch (settings.container)
                             {
-                                List<SleepingBag> Bags = new List<SleepingBag>();
-                                foreach (BaseEntity baseEntity in SpawnedCars[type.ToString()].children)
-                                {
-                                    if (baseEntity == null) continue;
-                                    foreach (BaseEntity baseEntity2 in baseEntity.children)
-                                    {
-                                        if (baseEntity2 == null) continue;
-                                        SleepingBag sleepingBagCamper;
-                                        if ((sleepingBagCamper = (baseEntity2 as SleepingBag)) != null)
-                                        {
-                                            Bags.Add(sleepingBagCamper);
-                                        }
-                                    }
-                                }
-                                //Fix for bags owners and name
-                                if (Bags.Count != 0)
-                                {
-                                    string[] BagData = ii.Value.Split(new string[] { "<bag>" }, StringSplitOptions.None);
-                                    if (BagData != null && BagData.Length != 0)
-                                    {
-                                        int bagmodded = 0;
-                                        foreach (string bag in BagData)
-                                        {
-                                            string[] data = bag.Split(new string[] { "<uid>" }, StringSplitOptions.None);
-                                            if (data.Length == 2)
-                                            {
-                                                if (Bags.Count >= bagmodded)
-                                                {
-                                                    if (ulong.TryParse(data[1], out _ulong)) { Bags[bagmodded].deployerUserID = _ulong; }
-                                                    Bags[bagmodded].niceName = data[0];
-                                                    Bags[bagmodded].SendNetworkUpdate(BasePlayer.NetworkQueue.Update);
-                                                    bagmodded++;
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
+                                case 0:
+                                    //fill storage box
+                                    MoveItems(settings, vehicleModuleCamper.activeStorage.Get(true).inventory);
+                                    break;
+                                case 1:
+                                    //fill locker
+                                    MoveItems(settings, vehicleModuleCamper.activeLocker.Get(true).inventory);
+                                    break;
+                                case 2:
+                                    //Fill bbq
+                                    MoveItems(settings, vehicleModuleCamper.activeBbq.Get(true).inventory);
+                                    break;
                             }
-                            break;
-                        case "id":
-                            if (int.TryParse(ii.Value, out _int)) { id = _int; }
-                            break;
-                        case "condition":
-                            if (float.TryParse(ii.Value, out _float)) { condition = _float; }
-                            break;
-                        case "amount":
-                            if (int.TryParse(ii.Value, out _int)) { amount = _int; }
-                            break;
-                        case "skinid":
-                            if (ulong.TryParse(ii.Value, out _ulong)) { skinid = _ulong; }
-                            break;
-                        case "code":
-                            if (int.TryParse(ii.Value, out _int)) { code = _int; }
-                            break;
-                        case "container":
-                            container = ii.Value;
-                            break;
-                        case "slot":
-                            if (SpawnedCars.ContainsKey(ownerid))
-                            {
-                                if (int.TryParse(ii.Value, out _int))
-                                {
-                                    ModularCar mc = SpawnedCars[ownerid] as ModularCar;
-                                    if (mc != null)
-                                    {
-                                        foreach (var moduleEntity in mc.AttachedModuleEntities)
-                                        {
-                                            ItemContainer Inventory;
-                                            //    //Process camper module
-                                            VehicleModuleCamper vehicleModuleCamper = moduleEntity as VehicleModuleCamper;
-                                            if (vehicleModuleCamper != null)
-                                            {
-                                                Item item;
-                                                switch (container)
-
-                                                {
-                                                    case "0":
-                                                        //fill storage box
-                                                        Inventory = vehicleModuleCamper.activeStorage.Get(true).inventory;
-                                                        if (Inventory != null)
-                                                        {
-                                                            item = CreateItem(id, amount, skinid, condition, code);
-                                                            if (item != null)
-                                                            {
-                                                                if (!item.MoveToContainer(Inventory, _int, true, true))
-                                                                {
-                                                                    item.position = _int;
-                                                                    Inventory.Insert(item);
-                                                                }
-                                                                continue;
-                                                            }
-                                                        }
-                                                        break;
-                                                    case "1":
-                                                        //fill locker
-                                                        Inventory = vehicleModuleCamper.activeLocker.Get(true).inventory;
-                                                        if (Inventory != null)
-                                                        {
-                                                            item = CreateItem(id, amount, skinid, condition, code);
-                                                            if (item != null)
-                                                            {
-                                                                if (!item.MoveToContainer(Inventory, _int, true, true))
-                                                                {
-                                                                    item.position = _int;
-                                                                    Inventory.Insert(item);
-                                                                }
-                                                                continue;
-                                                            }
-                                                        }
-                                                        break;
-                                                    case "2":
-                                                        //Fill bbq
-                                                        Inventory = vehicleModuleCamper.activeBbq.Get(true).inventory;
-                                                        if (Inventory != null)
-                                                        {
-                                                            item = CreateItem(id, amount, skinid, condition, code);
-                                                            if (item != null)
-                                                            {
-                                                                if (!item.MoveToContainer(Inventory, _int, true, true))
-                                                                {
-                                                                    item.position = _int;
-                                                                    Inventory.Insert(item);
-                                                                }
-                                                                continue;
-                                                            }
-                                                        }
-                                                        break;
-                                                }
-                                                //Update entitys
-                                                vehicleModuleCamper.SendNetworkUpdateImmediate();
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            break;
+                            //Update entitys
+                            vehicleModuleCamper.SendNetworkUpdateImmediate();
+                        }
                     }
                 }
             }
         }
 
-        private void ProcessModuleParts(List<Dictionary<string, string>> packets, Dictionary<string, ModularCar> SpawnedCars, string type = "")
+
+        private void ProcessModuleParts(Dictionary<string, ModularCar> SpawnedCars, BaseSettings settings)
         {
-            //Process module car parts
-            string ownerid = "0";
-            int id = 0;
-            float condition = 0;
-            int amount = 0;
-            ulong skinid = 0;
-            int code = 0;
-            int container = 0;
-            foreach (Dictionary<string, string> i in packets)
+            if (SpawnedCars.ContainsKey(settings.ownerid.ToString()))
             {
-                foreach (KeyValuePair<string, string> ii in i)
+                ModularCar mc = SpawnedCars[settings.ownerid.ToString()] as ModularCar;
+                if (mc != null)
                 {
-                    int _int;
-                    float _float;
-                    ulong _ulong;
-
-                    switch (ii.Key)
+                    int s = 0;
+                    foreach (var moduleEntity in mc.AttachedModuleEntities)
                     {
-                        case "ownerid":
-                            ownerid = ii.Value;
-                            break;
-                        case "id":
-                            if (int.TryParse(ii.Value, out _int)) { id = _int; }
-                            break;
-                        case "condition":
-                            if (float.TryParse(ii.Value, out _float)) { condition = _float; }
-                            break;
-                        case "amount":
-                            if (int.TryParse(ii.Value, out _int)) { amount = _int; }
-                            break;
-                        case "skinid":
-                            if (ulong.TryParse(ii.Value, out _ulong)) { skinid = _ulong; }
-                            break;
-                        case "code":
-                            if (int.TryParse(ii.Value, out _int)) { code = _int; }
-                            break;
-                        case "container":
-                            if (int.TryParse(ii.Value, out _int)) { container = _int; }
-                            break;
-                        case "slot":
-                            if (SpawnedCars.ContainsKey(ownerid))
-                            {
-                                if (int.TryParse(ii.Value, out _int))
-                                {
-                                    //One item of packet read apply it to car.
-                                    ModularCar mc = SpawnedCars[ownerid] as ModularCar;
-                                    if (mc != null)
-                                    {
-                                        int s = 0;
-                                        foreach (var moduleEntity in mc.AttachedModuleEntities)
-                                        {
-                                            if (s != container) { s++; continue; }
-                                            s++;
-                                            ItemContainer Inventory;
-                                            VehicleModuleEngine vehicleModuleEngine = moduleEntity as VehicleModuleEngine;
-                                            if (vehicleModuleEngine != null)
-                                            {
-                                                Inventory = vehicleModuleEngine.GetContainer()?.inventory;
-                                                if (Inventory != null)
-                                                {
-                                                    Item item = CreateItem(id, amount, skinid, condition, code);
-                                                    if (item != null)
-                                                    {
-                                                        if (!item.MoveToContainer(Inventory, _int, true, true))
-                                                        {
-                                                            item.position = _int;
-                                                            Inventory.Insert(item);
-                                                        }
-                                                    }
-                                                }
-                                                continue;
-                                            }
-                                            //Fill stoage with items
-                                            VehicleModuleStorage vehicleModuleStorage = moduleEntity as VehicleModuleStorage;
-                                            if (vehicleModuleStorage != null)
-                                            {
-                                                Inventory = vehicleModuleStorage.GetContainer()?.inventory;
-                                                if (Inventory != null)
-                                                {
-                                                    Item item = CreateItem(id, amount, skinid, condition, code);
-                                                    if (item != null)
-                                                    {
-                                                        if (!item.MoveToContainer(Inventory, _int, true, true))
-                                                        {
-                                                            item.position = _int;
-                                                            Inventory.Insert(item);
-                                                        }
-                                                    }
-                                                }
-                                                continue;
-                                            }
-
-                                        }
-                                    }
-                                }
-                            }
-
-                            break;
+                        if (s != settings.container) { s++;  continue; }
+                        VehicleModuleEngine vehicleModuleEngine = moduleEntity as VehicleModuleEngine;
+                        if (vehicleModuleEngine != null)
+                        {
+                            MoveItems(settings, vehicleModuleEngine.GetContainer().inventory);
+                            s++;
+                            continue;
+                        }
+                        //Fill stoage with items
+                        VehicleModuleStorage vehicleModuleStorage = moduleEntity as VehicleModuleStorage;
+                        if (vehicleModuleStorage != null)
+                        {
+                            MoveItems(settings, vehicleModuleStorage.GetContainer().inventory);
+                            s++;
+                            continue;
+                        }
+                        s++;
                     }
                 }
             }
-
-        }
+        } 
 
         private Dictionary<string, BaseNetworkable> ProcessBasePlayer(List<Dictionary<string, string>> packets, BaseEntity FerryPos)
         {
@@ -1925,59 +1692,6 @@ namespace Oxide.Plugins
             return null;
         }
 
-        private void ProcessItems(List<Dictionary<string, string>> packets, Dictionary<string, BaseNetworkable> CreatedEntitys)
-        {
-            //Process items
-            string ownerid = "0";
-            int id = 0;
-            float condition = 0;
-            int amount = 0;
-            ulong skinid = 0;
-            int container = 0;
-            int code = 0;
-            string mods = "";
-            foreach (Dictionary<string, string> i in packets)
-            {
-                foreach (KeyValuePair<string, string> ii in i)
-                {
-                    int _int;
-                    float _float;
-                    ulong _ulong;
-                    switch (ii.Key)
-                    {
-                        case "ownerid":
-                            ownerid = ii.Value;
-                            break;
-                        case "id":
-                            if (int.TryParse(ii.Value, out _int)) { id = _int; }
-                            break;
-                        case "condition":
-                            if (float.TryParse(ii.Value, out _float)) { condition = _float; }
-                            break;
-                        case "amount":
-                            if (int.TryParse(ii.Value, out _int)) { amount = _int; }
-                            break;
-                        case "skinid":
-                            if (ulong.TryParse(ii.Value, out _ulong)) { skinid = _ulong; }
-                            break;
-                        case "code":
-                            if (int.TryParse(ii.Value, out _int)) { code = _int; }
-                            break;
-                        case "mods":
-                            mods = ii.Value;
-                            break;
-                        case "container":
-                            if (int.TryParse(ii.Value, out _int)) { container = _int; }
-                            break;
-                        case "slot":
-                            //One item read from packet
-                            if (int.TryParse(ii.Value, out _int)) { GiveContents(ownerid, id, condition, amount, skinid, code, _int, container, mods, CreatedEntitys); }
-                            break;
-                    }
-                }
-            }
-        }
-
         private void GiveContents(string ownerid, int id, float condition, int amount, ulong skinid, int code, int slot, int container , string mods, Dictionary<string, BaseNetworkable> CreatedEntitys)
         {
             if (CreatedEntitys.ContainsKey(ownerid))
@@ -2003,11 +1717,8 @@ namespace Oxide.Plugins
                         if (item == null) return;
                         if (!item.MoveToContainer(rh.inventory, slot, true, true))
                         {
-                            NextTick(() =>
-                            {
                                 item.position = slot;
                                 rh.inventory.Insert(item);
-                            });
                         }
                         return;
                     }
@@ -2025,12 +1736,9 @@ namespace Oxide.Plugins
                                 {
                                     if(!item.MoveToContainer(bp.inventory.containerWear, slot, true, true))
                                     {
-                                        NextTick(() =>
-                                        {
                                             item.position = slot;
                                             bp.inventory.containerWear.Insert(item);
-                                        });
-                                    }
+                                     }
                                 }
                                 break;
                             case 1:
@@ -2039,12 +1747,9 @@ namespace Oxide.Plugins
                                 {
                                     if (!item.MoveToContainer(bp.inventory.containerBelt, slot, true, true))
                                     {
-                                        NextTick(() =>
-                                        {
                                             item.position = slot;
                                             bp.inventory.containerBelt.Insert(item);
-                                        });
-                                    }
+                                      }
                                 }
                                 break;
                             case 2:
@@ -2053,11 +1758,8 @@ namespace Oxide.Plugins
                                 {
                                     if (!item.MoveToContainer(bp.inventory.containerMain, slot, true, true))
                                     {
-                                        NextTick(() =>
-                                        {
                                             item.position = slot;
                                             bp.inventory.containerMain.Insert(item);
-                                        });
                                     }
                                 }
                                 break;
@@ -2084,8 +1786,7 @@ namespace Oxide.Plugins
                     {
                         //Apply mods if its a gun
                         string[] modsetting = mod.Split('=');
-                        if(modsetting.Length == 2)
-                        if (config._ServerSettings.ShowDebugMsg) Puts("BuildItem adding mod " + modsetting[0] + " " + modsetting[1]);
+                        if (modsetting.Length != 2) continue;
                         int _int;
                         float _float;
                         if (int.TryParse(modsetting[0], out _int) && float.TryParse(modsetting[1], out _float))
@@ -2125,56 +1826,55 @@ namespace Oxide.Plugins
 
         private string CreatePacket(List<BaseNetworkable> Transfere, BaseEntity FerryPos, string dat = "")
         {
+            if (FerryPos == null || Transfere == null) { return ""; }
             //Create packet to send to hub
             var data = new Dictionary<string, List<Dictionary<string, string>>>();
             var itemlist = new List<Dictionary<string, string>>();
             //Loop though all basenetworkables that are parented to ferry
             foreach (BaseEntity entity in Transfere)
             {
+                if (entity == null) { continue; }
                 //Create a baseplayer packet
                 BasePlayer baseplayer = entity as BasePlayer;
-                if (baseplayer?.inventory != null)
+                if (baseplayer != null)
                 {
                     itemlist = new List<Dictionary<string, string>>();
                     itemlist.Add(basePlayer(baseplayer, FerryPos));
                     data.Add("BasePlayer[" + baseplayer.UserIDString + "]", itemlist);
                     itemlist = new List<Dictionary<string, string>>();
                     //Label items with wich container they came from
-                    for (int slot = 0; slot < baseplayer.inventory.containerWear.capacity; slot++)
+                    if (baseplayer.inventory.containerWear.itemList != null)
                     {
-                        try { 
-                        Item item = baseplayer.inventory.containerWear.itemList[slot];
-                        if (item != null)
+                        foreach (Item item in baseplayer.inventory.containerWear.itemList)
                         {
-                            itemlist.Add(Contents(item, baseplayer.UserIDString, item.position.ToString(),"0"));
-                            item.Remove();
+                            if (item != null)
+                            {
+                                itemlist.Add(Contents(item, baseplayer.UserIDString, item.position.ToString(), "0"));
+                                item.Remove();
+                            }
                         }
-                        }
-                        catch { }
                     }
-                    for (int slot = 0; slot < baseplayer.inventory.containerBelt.capacity; slot++)
+                    if (baseplayer.inventory.containerBelt.itemList != null)
                     {
-                        try { 
-                        Item item = baseplayer.inventory.containerBelt.itemList[slot];
-                        if (item != null)
+                        foreach (Item item in baseplayer.inventory.containerBelt.itemList)
                         {
-                            itemlist.Add(Contents(item, baseplayer.UserIDString, item.position.ToString(), "1"));
-                            item.Remove();
+                            if (item != null)
+                            {
+                                itemlist.Add(Contents(item, baseplayer.UserIDString, item.position.ToString(), "1"));
+                                item.Remove();
+                            }
                         }
-                        }
-                        catch { }
                     }
-                    for (int slot = 0; slot < baseplayer.inventory.containerMain.capacity; slot++)
+                    if (baseplayer.inventory.containerMain.itemList != null)
                     {
-                        try { 
-                        Item item = baseplayer.inventory.containerMain.itemList[slot];
-                        if (item != null)
+                        foreach (Item item in baseplayer.inventory.containerMain.itemList)
                         {
-                            itemlist.Add(Contents(item, baseplayer.UserIDString, item.position.ToString(), "2"));
-                            item.Remove();
+                            if (item != null)
+                            {
+                                itemlist.Add(Contents(item, baseplayer.UserIDString, item.position.ToString(), "2"));
+                                item.Remove();
+                            }
                         }
-                        }
-                        catch { }
                     }
                     //Attach inventory and plugin data to packet
                     if (itemlist.Count != 0) { data.Add("BasePlayerInventory[" + baseplayer.UserIDString + "]", itemlist); }
@@ -2207,14 +1907,16 @@ namespace Oxide.Plugins
                     itemlist.Add(basehorse(horse, FerryPos));
                     data.Add("BaseHorse[" + horse.net.ID.ToString() + "]", itemlist);
                     itemlist = new List<Dictionary<string, string>>();
-                    for(int slot = 0; slot < horse.inventory.capacity; slot++)
+                    if (horse.inventory.itemList != null)
                     {
-                            Item item = horse.inventory.itemList[slot];
+                        foreach (Item item in horse.inventory.itemList)
+                        {
                             if (item != null)
                             {
                                 itemlist.Add(Contents(item, horse.net.ID.ToString(), item.position.ToString()));
                                 item.Remove();
                             }
+                        }
                     }
                     data.Add("BaseHorseInventory[" + horse.net.ID.ToString() + "]", itemlist);
                     continue;
@@ -2280,17 +1982,12 @@ namespace Oxide.Plugins
             if (Backpack != null)
             {
                 //Create list of items in backpack
-                for (int slot = 0; slot < Backpack.itemList.Capacity; slot++)
+                foreach(Item item in Backpack.itemList)
                 {
-                    try
+                    if (item != null)
                     {
-                        Item item = Backpack.itemList[slot];
-                        if (item != null)
-                        {
-                            Data.Add(Contents(item, Owner, item.position.ToString()));
-                        }
+                        Data.Add(Contents(item, Owner, item.position.ToString()));
                     }
-                    catch { }
                 }
             }
             return Data;
@@ -2306,64 +2003,8 @@ namespace Oxide.Plugins
                 Backpack = Backpacks?.Call<ItemContainer>("API_GetBackpackContainer", ulong.Parse(owneridparsed));
                 if (Backpack != null)
                 {
-                    int id = 0;
-                    float condition = 0;
-                    int amount = 0;
-                    ulong skinid = 0;
-                    int code = 0;
-                    List<string> Wmods = new List<string>();
-                    //Parse out data
-                    foreach (Dictionary<string, string> i in packets)
-                    {
-                        foreach (KeyValuePair<string, string> ii in i)
-                        {
-                            int _int;
-                            float _float;
-                            ulong _ulong;
-                            switch (ii.Key)
-                            {
-                                case "id":
-                                    if (int.TryParse(ii.Value, out _int)) { id = _int; }
-                                    break;
-                                case "condition":
-                                    if (float.TryParse(ii.Value, out _float)) { condition = _float; }
-                                    break;
-                                case "amount":
-                                    if (int.TryParse(ii.Value, out _int)) { amount = _int; }
-                                    break;
-                                case "skinid":
-                                    if (ulong.TryParse(ii.Value, out _ulong)) { skinid = _ulong; }
-                                    break;
-                                case "code":
-                                    if (int.TryParse(ii.Value, out _int)) { code = _int; }
-                                    break;
-                                case "mods":
-                                    if (ii.Value != "")
-                                    {
-                                        string[] wmod = ii.Value.Split('_');
-                                        foreach (string w in wmod) { Wmods.Add(w); }
-                                    }
-                                    break;
-                                case "slot":
-                                    //One item read from packet so create item and put it in backpack
-                                    if (int.TryParse(ii.Value, out _int)) {
-                                        Item item = BuildItem(id, amount, skinid, condition, code, Wmods);
-                                        if(item != null)
-                                        {
-                                            if(!item.MoveToContainer(Backpack, _int,true,true))
-                                            {
-                                                NextTick(() =>
-                                                {
-                                                    item.position = _int;
-                                                    Backpack.Insert(item);
-                                                });
-                                            }
-                                        }
-                                    }
-                                    break;
-                            }
-                        }
-                    }
+                    BaseSettings settings = new BaseSettings();
+                    settings.ProcessPacket(packets,null,"null",2,Backpack);
                 }
             }
         }
@@ -2426,7 +2067,7 @@ namespace Oxide.Plugins
             //Item packet
             string code = "0";
             string mods = "";
-            if (item.info.shortname == "car.key" || item.info.shortname == "door.key")
+            if (item.info.shortname != null &&(item.info.shortname == "car.key" || item.info.shortname == "door.key"))
             {
                 //Add keys code data
                 code = (item.instanceData.dataInt.ToString());
@@ -2473,7 +2114,6 @@ namespace Oxide.Plugins
 
         private void modularCar(ModularCar car, BaseEntity FerryPos, ref Dictionary<string, List<Dictionary<string, string>>> data)
         {
-            bool donebags = false;
             string thiscarID = car.net.ID.ToString();
             List<Dictionary<string, string>> itemlist = new List<Dictionary<string, string>>();
             itemlist.Add(baseVechicle(car, FerryPos, car.TotalSockets.ToString(), car.carLock.LockID.ToString()));
@@ -2485,17 +2125,19 @@ namespace Oxide.Plugins
                 //Create packet of engine parts
                 if (vehicleModuleEngine != null)
                 {
-                    data.Add("ModularCarEngine[" + vehicleModuleEngine.net.ID.ToString() + "]", ModularItems(vehicleModuleEngine.GetContainer().inventory, thiscarID, socket++.ToString()));
+
+                    data.Add("ModularCarItems[" + vehicleModuleEngine.net.ID + "]", ModularItems(vehicleModuleEngine.GetContainer().inventory, thiscarID, socket.ToString()));
+                    socket += moduleEntity.GetNumSocketsTaken();
                     continue;
                 }
-
                 VehicleModuleStorage vehicleModuleStorage = moduleEntity as VehicleModuleStorage;
                 if (vehicleModuleStorage != null)
                 {
-                    //create packet of storage box items
-                        data.Add("ModularCarStorage[" + vehicleModuleStorage.net.ID.ToString() + "]", ModularItems(vehicleModuleStorage.GetContainer().inventory, thiscarID, socket++.ToString()));
-                        continue;
+                    data.Add("ModularCarItems[" + vehicleModuleStorage.net.ID + "]", ModularItems(vehicleModuleStorage.GetContainer().inventory, thiscarID, socket.ToString()));
+                    socket += moduleEntity.GetNumSocketsTaken();
+                    continue;
                 }
+                socket += moduleEntity.GetNumSocketsTaken();
                 VehicleModuleCamper vehicleModuleCamper = moduleEntity as VehicleModuleCamper;
                 if (vehicleModuleCamper != null)
                 {
@@ -2505,53 +2147,34 @@ namespace Oxide.Plugins
                     {
                         itemlist = new List<Dictionary<string, string>>();
                         //Store position of stoage container
-                        foreach(Item item in vehicleModuleCamper.activeStorage.Get(true).inventory.itemList)
+                        foreach (Item item in vehicleModuleCamper.activeStorage.Get(true).inventory.itemList)
                         {
-                                if (item != null)
-                                {
-                                    itemlist.Add(Contents(item, thiscarID, item.position.ToString(), "0"));
-                                    item.Remove();
-                                }
+                            if (item != null)
+                            {
+                                itemlist.Add(Contents(item, thiscarID, item.position.ToString(), "0"));
+                                item.Remove();
+                            }
                         }
                         foreach (Item item in vehicleModuleCamper.activeLocker.Get(true).inventory.itemList)
                         {
-                                if (item != null)
-                                {
-                                    itemlist.Add(Contents(item, thiscarID, item.position.ToString(), "1"));
-                                    item.Remove();
-                                }
+                            if (item != null)
+                            {
+                                itemlist.Add(Contents(item, thiscarID, item.position.ToString(), "1"));
+                                item.Remove();
+                            }
                         }
                         foreach (Item item in vehicleModuleCamper.activeBbq.Get(true).inventory.itemList)
                         {
-                                if (item != null)
-                                {
-                                    itemlist.Add(Contents(item, thiscarID, item.position.ToString(), "2"));
-                                    item.Remove();
-                                }
+                            if (item != null)
+                            {
+                                itemlist.Add(Contents(item, thiscarID, item.position.ToString(), "2"));
+                                item.Remove();
+                            }
                         }
                         if (itemlist.Count != 0) { data.Add("ModularCarCamper[" + vehicleModuleCamper.net.ID.ToString() + "]", itemlist); }
+                        socket++;
                         continue;
                     }
-                }
-                if (!donebags)
-                {
-                    //Find all bags for this entity
-                    itemlist = new List<Dictionary<string, string>>();
-                    string bags = "";
-                    foreach (BaseEntity baseEntity in car.children)
-                    {
-                        if (baseEntity == null) continue;
-                        foreach (BaseEntity baseEntity2 in baseEntity.children)
-                        {
-                            if (baseEntity2 == null) continue;
-                            SleepingBag sleepingBagCamper;
-                            if ((sleepingBagCamper = (baseEntity2 as SleepingBag)) != null) { bags += sleepingBagCamper.niceName + "<uid>" + sleepingBagCamper.deployerUserID.ToString() + "<bag>"; }
-                        }
-                    }
-                    //Check it found some to create its packet
-                    if (bags != "") { itemlist.Add(new Dictionary<string, string> { { "bags", bags } }); }
-                    if (itemlist.Count != 0) { data.Add("ModularCarBags[" + car.net.ID.ToString() + "]", itemlist); }
-                    donebags = true;
                 }
             }
         }
@@ -2564,6 +2187,7 @@ namespace Oxide.Plugins
             string Modules = "";
             string Conditions = "";
             string Childred = "";
+            string bags = "";
             //Check if has unlimited fuel mods
             string unlimitedfuel = "False";
             MiniCopter mc = bv as MiniCopter;
@@ -2588,8 +2212,18 @@ namespace Oxide.Plugins
                         VehicleModuleEngine vme = moduleEntity as VehicleModuleEngine;
                         if (vme != null) { if ((moduleEntity as VehicleModuleEngine).engine.maxFuelPerSec == 0) { unlimitedfuel = "True"; } }
                         //Create module info
-                        try{Modules += moduleEntity.AssociatedItemInstance.info.itemid + "|";}catch { Modules += "null|"; }
-                        try{Conditions += moduleEntity._health + "|";}catch { Modules += "null|"; }
+                        try { Modules += moduleEntity.AssociatedItemInstance.info.itemid + "|"; } catch { Modules += "null|"; }
+                        try { Conditions += moduleEntity._health + "|"; } catch { Modules += "null|"; }
+                        foreach (BaseEntity baseEntity in car.children)
+                        {
+                            if (baseEntity == null) continue;
+                            foreach (BaseEntity baseEntity2 in baseEntity.children)
+                            {
+                                if (baseEntity2 == null) continue;
+                                SleepingBag sleepingBagCamper;
+                                if ((sleepingBagCamper = (baseEntity2 as SleepingBag)) != null) { bags += sleepingBagCamper.niceName + "<uid>" + sleepingBagCamper.deployerUserID.ToString() + "<bag>"; }
+                            }
+                        }
                     }
                 }
             }
@@ -2617,6 +2251,7 @@ namespace Oxide.Plugins
                         { "children", Childred },
                         { "conditions", Conditions},
                         { "unlimitedfuel", unlimitedfuel},
+                        { "bags", bags },
                         { "netid", bv.net.ID.ToString()},
                         { "sockets", socket },
                         };
@@ -2682,7 +2317,6 @@ namespace Oxide.Plugins
                 ulong skin = 0;
                 float condition = 0;
                 int code = 0;
-                int container = 0;
                 int slot = 0;
                 List<string> mods = new List<string>();
                 foreach (string st in itmlist)
@@ -2712,20 +2346,14 @@ namespace Oxide.Plugins
                         case "mods":
                             if (info[1] != "") { string[] wmod = info[1].Split('_'); foreach (string w in wmod) { mods.Add(w); } }
                             break;
-                        case "container":
-                            if (int.TryParse(info[1], out _int)) { container = _int; }
-                            break;
                         case "slot":
                             if (int.TryParse(info[1], out _int)) { slot = _int; }
                             Item i = BuildItem(id, amount, skin, condition, code, mods);
                             if(i == null) { continue; }
                             if(!i.MoveToContainer(ice.inventory, slot, true, true))
                             {
-                                NextTick(() =>
-                                {
                                     i.position = slot;
                                     ice.inventory.Insert(i);
-                                });
                             }
                             break;
                     }
@@ -2849,7 +2477,7 @@ namespace Oxide.Plugins
 
         private void SetFlags(BaseEntity be, string data)
         {
-            string[] f = data.Split(new string[] { "<BEFlag>" }, System.StringSplitOptions.RemoveEmptyEntries);
+            string[] f = data.Split(new string[] { "<BEF>" }, System.StringSplitOptions.RemoveEmptyEntries);
             List<bool> flags = new List<bool>();
             foreach (string s in f) { bool _bool; if (bool.TryParse(s, out _bool)) { flags.Add(_bool); } }
             be.SetFlag(BaseEntity.Flags.Broken, flags[0]);
@@ -2883,36 +2511,9 @@ namespace Oxide.Plugins
             //Use net id so can relink
             if (parent) { baseentity += "<Parent>" + be.net.ID + "|"; }
             else { baseentity += "<Child>" + be.net.ID + "|"; }
-            baseentity += be.prefabID.ToString() + "|";
-            baseentity += be.transform.localPosition.ToString() + "|";
-            baseentity += be.transform.localRotation.ToString() + "|";
-            baseentity += be.transform.localScale.ToString() + "|";
-            baseentity += be.skinID.ToString() + "|";
-            baseentity += be.MaxHealth().ToString() + "|";
-            baseentity += be.Health().ToString() + "|";
+            baseentity += be.prefabID.ToString() + "|" + be.transform.localPosition.ToString() + "|" + be.transform.localRotation.ToString() + "|"+be.transform.localScale.ToString() + "|"+be.skinID.ToString() + "|"+be.MaxHealth().ToString() + "|"+be.Health().ToString() + "|";
             //Get all flags
-            baseentity += "<BEFlag>" + be.HasFlag(BaseEntity.Flags.Broken);
-            baseentity += "<BEFlag>" + be.HasFlag(BaseEntity.Flags.Busy);
-            baseentity += "<BEFlag>" + be.HasFlag(BaseEntity.Flags.Debugging);
-            baseentity += "<BEFlag>" + be.HasFlag(BaseEntity.Flags.Disabled);
-            baseentity += "<BEFlag>" + be.HasFlag(BaseEntity.Flags.Locked);
-            baseentity += "<BEFlag>" + be.HasFlag(BaseEntity.Flags.On);
-            baseentity += "<BEFlag>" + be.HasFlag(BaseEntity.Flags.OnFire);
-            baseentity += "<BEFlag>" + be.HasFlag(BaseEntity.Flags.Open);
-            baseentity += "<BEFlag>" + be.HasFlag(BaseEntity.Flags.Placeholder);
-            baseentity += "<BEFlag>" + be.HasFlag(BaseEntity.Flags.Protected);
-            baseentity += "<BEFlag>" + be.HasFlag(BaseEntity.Flags.Reserved1);
-            baseentity += "<BEFlag>" + be.HasFlag(BaseEntity.Flags.Reserved10);
-            baseentity += "<BEFlag>" + be.HasFlag(BaseEntity.Flags.Reserved11);
-            baseentity += "<BEFlag>" + be.HasFlag(BaseEntity.Flags.Reserved2);
-            baseentity += "<BEFlag>" + be.HasFlag(BaseEntity.Flags.Reserved3);
-            baseentity += "<BEFlag>" + be.HasFlag(BaseEntity.Flags.Reserved4);
-            baseentity += "<BEFlag>" + be.HasFlag(BaseEntity.Flags.Reserved5);
-            baseentity += "<BEFlag>" + be.HasFlag(BaseEntity.Flags.Reserved6);
-            baseentity += "<BEFlag>" + be.HasFlag(BaseEntity.Flags.Reserved7);
-            baseentity += "<BEFlag>" + be.HasFlag(BaseEntity.Flags.Reserved8);
-            baseentity += "<BEFlag>" + be.HasFlag(BaseEntity.Flags.Reserved9);
-            baseentity += "|";
+            baseentity += "<BEF>" + be.HasFlag(BaseEntity.Flags.Broken)+"<BEF>" + be.HasFlag(BaseEntity.Flags.Busy)+"<BEF>" + be.HasFlag(BaseEntity.Flags.Debugging)+"<BEF>" + be.HasFlag(BaseEntity.Flags.Disabled)+"<BEF>" + be.HasFlag(BaseEntity.Flags.Locked)+"<BEF>" + be.HasFlag(BaseEntity.Flags.On)+"<BEF>" + be.HasFlag(BaseEntity.Flags.OnFire)+"<BEF>" + be.HasFlag(BaseEntity.Flags.Open)+"<BEF>" + be.HasFlag(BaseEntity.Flags.Placeholder)+"<BEF>" + be.HasFlag(BaseEntity.Flags.Protected)+"<BEF>" + be.HasFlag(BaseEntity.Flags.Reserved1)+"<BEF>" + be.HasFlag(BaseEntity.Flags.Reserved10)+"<BEF>" + be.HasFlag(BaseEntity.Flags.Reserved11)+"<BEF>" + be.HasFlag(BaseEntity.Flags.Reserved2)+"<BEF>" + be.HasFlag(BaseEntity.Flags.Reserved3)+ "<BEF>" + be.HasFlag(BaseEntity.Flags.Reserved4)+"<BEF>" + be.HasFlag(BaseEntity.Flags.Reserved5)+"<BEF>" + be.HasFlag(BaseEntity.Flags.Reserved6)+"<BEF>" + be.HasFlag(BaseEntity.Flags.Reserved7)+"<BEF>" + be.HasFlag(BaseEntity.Flags.Reserved8)+"<BEF>" + be.HasFlag(BaseEntity.Flags.Reserved9)+"|";
             //Check if ground
             StabilityEntity s = be as StabilityEntity;
             if (s == null) { baseentity += "null|"; }
@@ -2933,11 +2534,7 @@ namespace Oxide.Plugins
                 CodeLock codelock = be.GetSlot(0) as CodeLock;
                 if (codelock != null)
                 {
-                    baseentity += "<CodeLock>" + codelock.transform.localPosition;
-                    baseentity += "<CodeLock>" + codelock.transform.localRotation;
-                    baseentity += "<CodeLock>" + codelock.code;
-                    baseentity += "<CodeLock>" + codelock.HasFlag(CodeLock.Flags.Locked);
-                    baseentity += "<CodeLock>";
+                    baseentity += "<CodeLock>" + codelock.transform.localPosition+ "<CodeLock>" + codelock.transform.localRotation+ "<CodeLock>" + codelock.code+ "<CodeLock>" + codelock.HasFlag(CodeLock.Flags.Locked)+ "<CodeLock>";
                     foreach (ulong id in codelock.whitelistPlayers) { baseentity += "<player>" + id; }
                     baseentity += "|";
                 }
@@ -2953,24 +2550,15 @@ namespace Oxide.Plugins
                 {
                     //int sl = 0;
                     List<Dictionary<string, string>> itmlist = new List<Dictionary<string, string>>();
-                    List<Item> added = new List<Item>();
-                    for (int slot = 0; slot < ic.inventory.capacity; slot++)
-                    {
-                        try { 
-                        Item item = ic.inventory.itemList[slot];
-                        if (item == null || added.Contains(item)) { continue; }
+                    foreach(Item item in ic.inventory.itemList)
+                    { 
+                        if (item == null) { continue; }
                         {
-                            added.Add(item);
                             itmlist.Add(Contents(item, be.OwnerID.ToString(), item.position.ToString()));
                             item.Remove();
                         }
-                        }
-                        catch { }
                     }
-                    foreach (Dictionary<string, string> dict in itmlist)
-                    {
-                        foreach (KeyValuePair<string, string> itz in dict) { baseentity += itz.Key + "," + itz.Value + "<item>"; }
-                    }
+                    foreach (Dictionary<string, string> dict in itmlist){foreach (KeyValuePair<string, string> itz in dict) { baseentity += itz.Key + "," + itz.Value + "<item>"; }}
                 }
                 baseentity += "|";
             }
@@ -2992,15 +2580,11 @@ namespace Oxide.Plugins
                 //Add to list
                 Family.Add(be);
                 XML += GetBaseEntity(be);
-                if (be.children != null || be.children.Count != 0)
-                {
-                    //Found children of chidren so run on them
-                    GetAllFamily(be);
-                }
+                //Found children of chidren so run on them
+                if (be.children != null || be.children.Count != 0){GetAllFamily(be);}
             }
             return XML;
         }
-
         #endregion
 
         #region Classes
@@ -3009,6 +2593,7 @@ namespace Oxide.Plugins
             //Class of common used settings in deserilising
             public Quaternion rot = new Quaternion();
             public Vector3 pos = Vector3.zero;
+            public int id;
             public string prefab = "";
             public float health = 0;
             public float maxhealth = 0;
@@ -3018,6 +2603,7 @@ namespace Oxide.Plugins
             public string children = "";
             public string conditions = "";
             public int slot = 0;
+            public int amount = 0;
             public int container = 0;
             public string netid = "";
             public int currentBreed = 0;
@@ -3027,6 +2613,9 @@ namespace Oxide.Plugins
             public float maxSpeed = 0;
             public string steamid = "";
             public string name = "";
+            public float condition = 0;
+            public ulong skinid = 0;
+            public int code = 0;
             public float hydration = 0;
             public string team = "";
             public float calories = 0;
@@ -3035,8 +2624,10 @@ namespace Oxide.Plugins
             public bool unlimitedfuel = false;
             public string[] blueprints = new string[0];
             public string[] mods = new string[0];
+            public string mod = "";
+            public string bags = "";
 
-            public void ProcessPacket(List<Dictionary<string, string>> packets)
+            public void ProcessPacket(List<Dictionary<string, string>> packets, Dictionary<string, ModularCar> SpawnedCars = null, string type = "null",int containertype = -1, ItemContainer sc = null, Dictionary<string, BaseNetworkable> CreatedEntitys = null)
             {
                 foreach (Dictionary<string, string> i in packets)
                 {
@@ -3053,6 +2644,12 @@ namespace Oxide.Plugins
                                 break;
                             case "position":
                                 pos = plugin.StringToVector3(ii.Value);
+                                break;
+                            case "id":
+                                if (int.TryParse(ii.Value, out _int)) { id = _int; }
+                                break;
+                            case "amount":
+                                if (int.TryParse(ii.Value, out _int)) { amount = _int; }
                                 break;
                             case "prefab":
                                 prefab = ii.Value;
@@ -3074,6 +2671,43 @@ namespace Oxide.Plugins
                                 break;
                             case "slot":
                                 if (int.TryParse(ii.Value, out _int)) { slot = _int; }
+                                switch(containertype)
+                                {
+                                    case 0:
+                                        plugin.ProcessCamper(SpawnedCars, this);
+                                        break;
+                                    case 1:
+                                        plugin.ProcessModuleParts(SpawnedCars,this);
+                                        break;
+                                    case 2: //Backpack
+                                        string[] wmod = new string[0];
+                                        if (mod != "")
+                                        {
+                                            wmod = ii.Value.Split('_');
+                                        }
+                                        Item item = plugin.BuildItem(id, amount, skinid, condition, code, wmod.ToList());
+                                        if (item != null)
+                                        {
+                                            if (!item.MoveToContainer(sc, slot, true, true))
+                                            {
+                                                item.position = _int;
+                                                sc.Insert(item);
+                                            }
+                                        }
+                                        break;
+                                    case 3: //BasePlayer Invontory
+                                        plugin.GiveContents(ownerid.ToString(), id, condition, amount, skinid, code, slot, container, mod, CreatedEntitys);
+                                        break;
+                                }
+                                break;
+                            case "condition":
+                                if (float.TryParse(ii.Value, out _float)) { condition = _float; }
+                                break;
+                            case "skinid":
+                                if (ulong.TryParse(ii.Value, out _ulong)) { skinid = _ulong; }
+                                break;
+                            case "code":
+                                if (int.TryParse(ii.Value, out _int)) { code = _int; }
                                 break;
                             case "modules":
                                 modules = ii.Value;
@@ -3123,6 +2757,9 @@ namespace Oxide.Plugins
                             case "modifiers":
                                 mods = ii.Value.Split('_');
                                 break;
+                            case "mods":
+                                mod = ii.Value;
+                                break;
                             case "seat":
                                 if (int.TryParse(ii.Value, out _int)) { seat = _int; }
                                 break;
@@ -3131,19 +2768,17 @@ namespace Oxide.Plugins
                                 ulong usteamid;
                                 if (ulong.TryParse(steamid, out usteamid)) { if (mounted && !plugin.SeatPlayers.ContainsKey(usteamid)) { plugin.SeatPlayers.Add(usteamid, seat); } }
                                 break;
+                            case "bags":
+                                bags = ii.Value;
+                                break;
                         }
                     }
                 }
             }
         }
-
+        private class ModuleData { public List<float> condition = new List<float>(); public List<ItemModVehicleModule> modules = new List<ItemModVehicleModule>(); }
         //Open Nexus Ferry Code
-        public class OpenNexusIsland : BaseEntity
-        {
-            public global::GameObjectRef MapMarkerPrefab;
-            public Transform MapMarkerLocation;
-        }
-
+        public class OpenNexusIsland : BaseEntity{public GameObjectRef MapMarkerPrefab;public Transform MapMarkerLocation;}
         //Open Nexus Ferry Code
         public class OpenNexusFerry : BaseEntity
         {
@@ -3195,23 +2830,14 @@ namespace Oxide.Plugins
                         Vector3 closest = Vector3.zero;
                         foreach (KeyValuePair<Vector3, Quaternion> foundislands in plugin.FoundIslands)
                         {
-                            if (closest == Vector3.zero)
-                            {
-                                closest = foundislands.Key;
-                            }
-                            if (Vector3.Distance(FerryPos.position, foundislands.Key) < Vector3.Distance(FerryPos.position, closest))
-                            {
-                                closest = foundislands.Key;
-                            }
+                            if (closest == Vector3.zero){closest = foundislands.Key;}
+                            if (Vector3.Distance(FerryPos.position, foundislands.Key) < Vector3.Distance(FerryPos.position, closest)){closest = foundislands.Key;}
                         }
                         closest.y = 0;
                         if (config._ServerSettings.ShowDebugMsg) plugin.Puts("Found nearest island @ " + closest.ToString());
                         Departure.position = closest;
                     }
-                    else
-                    {
-                        Departure.position = Docked.position + (FerryPos.rotation * Vector3.forward) * (100 + config._ServerSettings.ExtendFerryDistance);
-                    }
+                    else{Departure.position = Docked.position + (FerryPos.rotation * Vector3.forward) * (100 + config._ServerSettings.ExtendFerryDistance);}
                     Arrival.position = Docked.position + (FerryPos.rotation * Vector3.forward) * 124.2f;
                     Arrival.position = Arrival.position + (FerryPos.rotation * Vector3.right) * 73.8f;
                     Docking.position = Docked.position + (FerryPos.rotation * Vector3.forward) * 49f;
@@ -3232,14 +2858,12 @@ namespace Oxide.Plugins
             {
                 enabled = false;
                 CancelInvoke();
-                if (!IsDestroyed)
-                    Kill();
+                if (!IsDestroyed) { Kill(); }
             }
 
             private void Die()
             {
-                if (this != null && !IsDestroyed)
-                    Destroy(this);
+                if (this != null && !IsDestroyed) { Destroy(this); }
             }
 
             private void Update()
@@ -3254,11 +2878,8 @@ namespace Oxide.Plugins
                 if (!base.isServer) { return; }
                 if (_state == OpenNexusFerry.State.Waiting)
                 {
-                    if (_sinceStartedWaiting < config._FerrySettings.WaitTime)
-                    {
-                        //Waits at waiting state
-                        return;
-                    }
+                    //Waits at waiting state
+                    if (_sinceStartedWaiting < config._FerrySettings.WaitTime){return;}
                     SwitchToNextState();
                 }
                 if (MoveTowardsTarget()) { SwitchToNextState(); }
@@ -3532,6 +3153,7 @@ namespace Oxide.Plugins
                     object injection = Interface.CallHook("OnOpenNexusWrite", data);
                     if (injection is string){data = injection as string;}
                     else if(injection is bool) { return; }
+                    if(data == null || data == "") { return; }
                     //Add Compression
                     if (config._ServerSettings.UseCompression) { data = Convert.ToBase64String(Compression.Compress(Encoding.UTF8.GetBytes(data))); }
                     //Write packet
@@ -3548,15 +3170,11 @@ namespace Oxide.Plugins
                             continue;
                         }
                         //Destroy the entity since its been sent in packet
+                        be.transform.position = new Vector3(0, 0, 0);
                         be.Kill();
                     }
                 }
             }
-        }
-        private class ModuleData
-        {
-            public List<float> condition = new List<float>();
-            public List<ItemModVehicleModule> modules = new List<ItemModVehicleModule>();
         }
 
         private class EdgeTeleport : FacepunchBehaviour
