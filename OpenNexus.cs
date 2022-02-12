@@ -14,6 +14,7 @@ using Rust;
 using Oxide.Core.Plugins;
 using Newtonsoft.Json;
 using System.Linq;
+using Oxide.Game.Rust.Cui;
 
 namespace Oxide.Plugins
 {
@@ -31,7 +32,7 @@ namespace Oxide.Plugins
         private readonly string permadmin = "OpenNexus.admin";   //Allows to use admin commands
 
         //Memory
-        public Dictionary<Vector3, Quaternion> FoundIslands = new Dictionary<Vector3, Quaternion>();
+        public List<IslandData> FoundIslands = new List<IslandData>();
         private Dictionary<ulong, int> SeatPlayers = new Dictionary<ulong, int>();
         private List<BaseNetworkable> unloadable = new List<BaseNetworkable>();
         private List<ulong> ProcessingPlayers = new List<ulong>();
@@ -94,6 +95,8 @@ namespace Oxide.Plugins
                 public float EjectDelay;
                 [JsonProperty("How long ferry waits out at sea for transferes (seconds)")]
                 public int TransfereTime;
+                [JsonProperty("How long ferry waits out at sea for sync packet before giving up on starting transfere (seconds)")]
+                public int TransfereSyncTime;
                 [JsonProperty("Extra time after things spawn on ferry to wait before returning to dock (seconds)")]
                 public int ProgressDelay;
                 [JsonProperty("Extra time to wait between moving entitys and players")]
@@ -113,7 +116,7 @@ namespace Oxide.Plugins
                         MySQLUsername = "OpenNexus",
                         MySQLPassword = "1234",
                         ExtendFerryDistance = 0,
-                        AutoDistance = false,
+                        AutoDistance = true,
                         SyncTimeWeather = true,
                         SyncTimeWeaterEvery = 360,
                         EdgeTeleporter = true,
@@ -124,9 +127,10 @@ namespace Oxide.Plugins
                     {
                         MoveSpeed = 10f,
                         TurnSpeed = 0.6f,
-                        WaitTime = 300,
-                        EjectDelay = 10,
+                        WaitTime = 120,
+                        EjectDelay = 30,
                         TransfereTime = 60,
+                        TransfereSyncTime = 180,
                         ProgressDelay = 60,
                         RedirectDelay = 5
                     },
@@ -388,6 +392,7 @@ namespace Oxide.Plugins
                     //Redirect player to last server they were in.
                     if (entry["target"].ToString() != thisserverip + ":" + thisserverport && entry["state"].ToString() != "Moving" && entry["state"].ToString() != "Ready" && connection != null)
                     {
+                        if (BasePlayer.FindByID(connection.ownerid).IPlayer.HasPermission(permbypass)) { return; }
                         string[] server = entry["target"].ToString().Split(':');
                         if (config._ServerSettings.ShowDebugMsg) Puts("ReadPlayers Redirecting  " + steamid);
                         ConsoleNetwork.SendClientCommand(connection, "nexus.redirect", new object[] { server[0], server[1] });
@@ -506,7 +511,6 @@ namespace Oxide.Plugins
             if (ProcessingPlayers.Contains(connection.ownerid)) return;
             ProcessingPlayers.Add(connection.ownerid);
             timer.Once(10f, () => ProcessingPlayers.Remove(connection.ownerid));
-            if (BasePlayer.FindByID(connection.ownerid).IPlayer.HasPermission(permbypass)) { return; }
             if (config._ServerSettings.ShowDebugMsg) Puts("Checking if " + connection.ownerid.ToString() + " is already on any OpenNexus servers");
             ReadPlayers(thisserverip + ":" + thisserverport, connection.ownerid, connection);
         }
@@ -564,6 +568,11 @@ namespace Oxide.Plugins
                         if (et != null) { UnityEngine.Object.Destroy(et); }
                     }
                 }
+            }
+            //Remove CUI messaghes
+            foreach (BasePlayer player in BasePlayer.activePlayerList)
+            {
+                CuiHelper.DestroyUi(player, "FerryInfo");
             }
             config = null;
             plugin = null;
@@ -667,18 +676,20 @@ namespace Oxide.Plugins
                     UnityEngine.Object.DestroyImmediate(island);
                     openNexusIsland.enableSaving = false;
                     openNexusIsland.Spawn();
-                    if (!FoundIslands.ContainsKey(position))
-                    {
-                        FoundIslands.Add(position, rotation);
-                        unloadable.Add(openNexusIsland);
-                        Puts("Found Island");
-                    }
+                    IslandData id = new IslandData();
+                    id.Island = openNexusIsland;
+                    id.location = position;
+                    id.rotation = rotation;
+                    FoundIslands.Add(id);
+                    Puts("Found Island @ " + position.ToString());
+                    unloadable.Add(openNexusIsland);
+
                 }
             }
             //Remove dead Ferry turrets at junk collection (happens on reboots might shoot though low ground maps)
             List<NPCAutoTurret> Z = new List<NPCAutoTurret>();
             Vis.Entities<NPCAutoTurret>(Vector3.zero, 25f, Z);
-            foreach (NPCAutoTurret ss in Z) { UnityEngine.GameObject.DestroyImmediate(ss); }
+            foreach (NPCAutoTurret ss in Z) { ss.Kill(); }
             //Add edge teleport
             if (config._ServerSettings.EdgeTeleporter) { foreach (BaseNetworkable vehicle in BaseNetworkable.serverEntities) { if (vehicle is BaseVehicle && vehicle.GetComponent<EdgeTeleport>() == null) vehicle.gameObject.AddComponent<EdgeTeleport>(); } }
         }
@@ -698,6 +709,32 @@ namespace Oxide.Plugins
             foreach (var groundwatch in ent.GetComponentsInChildren<GroundWatch>().ToArray()) { UnityEngine.Object.DestroyImmediate(groundwatch); }
         }
 
+        private void MessageScreen(string msg, Vector3 pos, float radius, int delay = 6)
+        {
+            List<BasePlayer> PlayersInRange = new List<BasePlayer>();
+            //Scans area for players
+            Vis.Entities<BasePlayer>(pos, radius, PlayersInRange);
+            //Shows CUI to each player in range
+            if (PlayersInRange.Count != 0)
+            {
+                foreach (BasePlayer player in PlayersInRange.ToArray())
+                {
+                    if (!player.IsSleeping())
+                    {
+                        CuiHelper.DestroyUi(player, "FerryInfo");
+                        var elements = new CuiElementContainer();
+                        elements.Add(new CuiLabel { Text = { Text = msg, FontSize = 32, Align = TextAnchor.MiddleCenter, FadeIn = 3, Color = "0.1 0.4 0.1 0.7" }, RectTransform = { AnchorMin = "0.0 0.800", AnchorMax = "0.99 0.900" } }, "Overlay", "FerryInfo");
+                        CuiHelper.AddUi(player, elements);
+                        //Destroys message after 5 secs
+                        timer.Once(delay, () =>
+                        {
+                            CuiHelper.DestroyUi(player, "FerryInfo");
+                        });
+                    }
+                }
+            }
+        }
+        
         private void AddLock(BaseEntity ent, string data)
         {
             //Recreates codelocks
@@ -1129,35 +1166,17 @@ namespace Oxide.Plugins
                         }
                         if (packets.Key.Contains("BasePlayerEconomicsData"))
                         {
-                            foreach (Dictionary<string, string> i in packets.Value)
-                            {
-                                foreach (KeyValuePair<string, string> ii in i)
-                                {
-                                    SetEconomicsData(ii.Key, ii.Value);
-                                }
-                            }
+                            foreach (Dictionary<string, string> i in packets.Value){foreach (KeyValuePair<string, string> ii in i){SetEconomicsData(ii.Key, ii.Value);}}
                             continue;
                         }
                         if (packets.Key.Contains("BasePlayerServerRewardsData"))
                         {
-                            foreach (Dictionary<string, string> i in packets.Value)
-                            {
-                                foreach (KeyValuePair<string, string> ii in i)
-                                {
-                                    SetServerRewardsData(ii.Key, ii.Value);
-                                }
-                            }
+                            foreach (Dictionary<string, string> i in packets.Value){foreach (KeyValuePair<string, string> ii in i){SetServerRewardsData(ii.Key, ii.Value);}}
                             continue;
                         }
                         if (packets.Key.Contains("BasePlayerZLevelsRemasteredData"))
                         {
-                            foreach (Dictionary<string, string> i in packets.Value)
-                            {
-                                foreach (KeyValuePair<string, string> ii in i)
-                                {
-                                    SetZLevelsRemasteredData(ii.Key, ii.Value);
-                                }
-                            }
+                            foreach (Dictionary<string, string> i in packets.Value){foreach (KeyValuePair<string, string> ii in i){SetZLevelsRemasteredData(ii.Key, ii.Value);}}
                             continue;
                         }
                         if (packets.Key.Contains("BasePlayerInventory"))
@@ -1169,74 +1188,38 @@ namespace Oxide.Plugins
                         if (packets.Key.Contains("BasePlayer"))
                         {
                             var bp = ProcessBasePlayer(packets.Value, parent);
-                            if (bp != null)
-                            {
-                                foreach (KeyValuePair<string, BaseNetworkable> m in bp)
-                                {
-                                    CreatedEntitys.Add(m.Key, m.Value);
-                                }
-                            }
+                            if (bp != null){foreach (KeyValuePair<string, BaseNetworkable> m in bp){CreatedEntitys.Add(m.Key, m.Value);}}
                             continue;
                         }
                     }
                     if (packets.Key.Contains("MiniCopter"))
                     {
                         var mc = ProcessHeli(packets.Value, parent);
-                        if (mc != null)
-                        {
-                            foreach (KeyValuePair<string, BaseNetworkable> m in mc)
-                            {
-                                CreatedEntitys.Add(m.Key, m.Value);
-                            }
-                        }
+                        if (mc != null){foreach (KeyValuePair<string, BaseNetworkable> m in mc){CreatedEntitys.Add(m.Key, m.Value);}}
                         continue;
                     }
                     if (packets.Key.Contains("BaseBoat"))
                     {
                         var bb = ProcessBoat(packets.Value, parent);
-                        if (bb != null)
-                        {
-                            foreach (KeyValuePair<string, BaseNetworkable> m in bb)
-                            {
-                                CreatedEntitys.Add(m.Key, m.Value);
-                            }
-                        }
+                        if (bb != null){foreach (KeyValuePair<string, BaseNetworkable> m in bb){CreatedEntitys.Add(m.Key, m.Value);}}
                         continue;
                     }
                     if (packets.Key.Contains("BaseCrane"))
                     {
                         var bc = ProcessCrane(packets.Value, parent);
-                        if (bc != null)
-                        {
-                            foreach (KeyValuePair<string, BaseNetworkable> m in bc)
-                            {
-                                CreatedEntitys.Add(m.Key, m.Value);
-                            }
-                        }
+                        if (bc != null){foreach (KeyValuePair<string, BaseNetworkable> m in bc){CreatedEntitys.Add(m.Key, m.Value);}}
                         continue;
                     }
                     if (packets.Key.Contains("SnowMobile"))
                     {
                         var bc = ProcessSnowmobile(packets.Value, parent);
-                        if (bc != null)
-                        {
-                            foreach (KeyValuePair<string, BaseNetworkable> m in bc)
-                            {
-                                CreatedEntitys.Add(m.Key, m.Value);
-                            }
-                        }
+                        if (bc != null){foreach (KeyValuePair<string, BaseNetworkable> m in bc){CreatedEntitys.Add(m.Key, m.Value);}}
                         continue;
                     }
                     if (packets.Key.Contains("BaseSubmarine"))
                     {
                         var bs = ProcessSub(packets.Value, parent);
-                        if (bs != null)
-                        {
-                            foreach (KeyValuePair<string, BaseNetworkable> m in bs)
-                            {
-                                CreatedEntitys.Add(m.Key, m.Value);
-                            }
-                        }
+                        if (bs != null){foreach (KeyValuePair<string, BaseNetworkable> m in bs){CreatedEntitys.Add(m.Key, m.Value);}}
                         continue;
                     }
                     if (packets.Key.Contains("BaseHorseInventory"))
@@ -1248,13 +1231,7 @@ namespace Oxide.Plugins
                     if (packets.Key.Contains("BaseHorse"))
                     {
                         var rh = ProcessHorse(packets.Value, parent);
-                        if (rh != null)
-                        {
-                            foreach (KeyValuePair<string, BaseNetworkable> r in rh)
-                            {
-                                CreatedEntitys.Add(r.Key, r.Value);
-                            }
-                        }
+                        if (rh != null){foreach (KeyValuePair<string, BaseNetworkable> r in rh){CreatedEntitys.Add(r.Key, r.Value);}}
                         continue;
                     }
                     if (packets.Key.Contains("ModularCarItems"))
@@ -1281,13 +1258,7 @@ namespace Oxide.Plugins
                     if (packets.Key.Contains("ModularCar"))
                     {
                         var sc = ProcessCar(packets.Value, parent);
-                        if (sc != null)
-                        {
-                            foreach (KeyValuePair<string, ModularCar> c in sc)
-                            {
-                                SpawnedCars.Add(c.Key, c.Value);
-                            }
-                        }
+                        if (sc != null){foreach (KeyValuePair<string, ModularCar> c in sc){SpawnedCars.Add(c.Key, c.Value);}}
                         continue;
                     }
                 }
@@ -1888,9 +1859,9 @@ namespace Oxide.Plugins
                     if (FerryPos is BasePlayer) { }//Is admin command so dont do transfere screen.
                     else
                     {
-                        plugin.AdjustConnectionScreen(baseplayer, "Open Nexus Transfering Data", 10);
-                        baseplayer.ClientRPCPlayer(null, baseplayer, "StartLoading");
-                        baseplayer.SetPlayerFlag(BasePlayer.PlayerFlags.ReceivingSnapshot, false);
+                            plugin.AdjustConnectionScreen(baseplayer, "Open Nexus Transfering Data", 10);
+                            baseplayer.ClientRPCPlayer(null, baseplayer, "StartLoading");
+                            baseplayer.SetPlayerFlag(BasePlayer.PlayerFlags.ReceivingSnapshot, false);
                     }
                     continue;
                 }
@@ -2044,10 +2015,7 @@ namespace Oxide.Plugins
         }
 
         //Sets players Economics balance
-        private void SetEconomicsData(string Owner, string Balance)
-        {
-            if (Economics != null && Owner != null && Balance != null) { Economics?.Call<string>("SetBalance", Owner, double.Parse(Balance)); }
-        }
+        private void SetEconomicsData(string Owner, string Balance){if (Economics != null && Owner != null && Balance != null) { Economics?.Call<string>("SetBalance", Owner, double.Parse(Balance)); }}
 
         //Get Zlevel data
         private List<Dictionary<string, string>> GetZLevelsRemasteredData(string Owner)
@@ -2059,21 +2027,15 @@ namespace Oxide.Plugins
         }
 
         //Sets Zlevel data
-        private void SetZLevelsRemasteredData(string ownerid, string packet)
-        {
-            if (ZLevelsRemastered != null) { ZLevelsRemastered.Call<bool>("api_SetPlayerInfo", ulong.Parse(ownerid), packet); }
-        }
+        private void SetZLevelsRemasteredData(string ownerid, string packet){if (ZLevelsRemastered != null) { ZLevelsRemastered.Call<bool>("api_SetPlayerInfo", ulong.Parse(ownerid), packet); }}
 
         private Dictionary<string, string> Contents(Item item, string Owner, string slot = "0", string container = "0")
         {
             //Item packet
             string code = "0";
             string mods = "";
-            if (item.info.shortname != null && (item.info.shortname == "car.key" || item.info.shortname == "door.key"))
-            {
-                //Add keys code data
-                code = (item.instanceData.dataInt.ToString());
-            }
+            //Add keys code data
+            if (item.info.shortname != null && (item.info.shortname == "car.key" || item.info.shortname == "door.key")){code = (item.instanceData.dataInt.ToString());}
             //Create list of mods on weapon
             if (item.contents != null)
             {
@@ -2782,6 +2744,7 @@ namespace Oxide.Plugins
         private class ModuleData { public List<float> condition = new List<float>(); public List<ItemModVehicleModule> modules = new List<ItemModVehicleModule>(); }
         //Open Nexus Ferry Code
         public class OpenNexusIsland : BaseEntity { public GameObjectRef MapMarkerPrefab; public Transform MapMarkerLocation; }
+        public class IslandData { public BaseEntity Island; public Vector3 location; public Quaternion rotation; }
         //Open Nexus Ferry Code
         public class OpenNexusFerry : BaseEntity
         {
@@ -2828,19 +2791,23 @@ namespace Oxide.Plugins
                     Docked.position = FerryPos.position;
                     Docked.rotation = FerryPos.rotation;
                     //Apply Offsets for movement
-                    if (config._ServerSettings.AutoDistance)
+                    Vector3 closest = Docked.position + (FerryPos.rotation * Vector3.forward) * (100 + config._ServerSettings.ExtendFerryDistance);
+                    if (config._ServerSettings.AutoDistance && plugin.FoundIslands != null)
                     {
-                        Vector3 closest = Vector3.zero;
-                        foreach (KeyValuePair<Vector3, Quaternion> foundislands in plugin.FoundIslands)
+                        foreach (IslandData foundislands in plugin.FoundIslands)
                         {
-                            if (closest == Vector3.zero) { closest = foundislands.Key; }
-                            if (Vector3.Distance(FerryPos.position, foundislands.Key) < Vector3.Distance(FerryPos.position, closest)) { closest = foundislands.Key; }
+                            Vector3 IL = foundislands.location + (Docked.position - foundislands.location) / 2;
+                            IL.y = TerrainMeta.WaterMap.GetHeight(Docked.position) + 3f;
+                            if (GamePhysics.LineOfSight(Docked.position  + ((FerryPos.rotation * Vector3.forward) * 20) + new Vector3(0,10,0), IL, -1))
+                            {
+                                closest = IL;
+                                closest.y = 0;
+                                if (config._ServerSettings.ShowDebugMsg) plugin.Puts("Found Auto Island @ " + (IL).ToString());
+                            }
                         }
-                        closest.y = 0;
-                        if (config._ServerSettings.ShowDebugMsg) plugin.Puts("Found nearest island @ " + closest.ToString());
                         Departure.position = closest;
                     }
-                    else { Departure.position = Docked.position + (FerryPos.rotation * Vector3.forward) * (100 + config._ServerSettings.ExtendFerryDistance); }
+                    Departure.position = closest;
                     Arrival.position = Docked.position + (FerryPos.rotation * Vector3.forward) * 124.2f;
                     Arrival.position = Arrival.position + (FerryPos.rotation * Vector3.right) * 73.8f;
                     Docking.position = Docked.position + (FerryPos.rotation * Vector3.forward) * 49f;
@@ -2907,6 +2874,35 @@ namespace Oxide.Plugins
                     default:
                         return base.transform;
                 }
+            }
+
+            private void TransfereWait()
+            {
+                if (LoadingSync) return;
+                string sqlQuery = "SELECT `state` FROM sync WHERE `sender` = @0 AND `target` = @1;";
+                //Read the targets state
+                Sql selectCommand = Oxide.Core.Database.Sql.Builder.Append(sqlQuery, ServerIP + ":" + ServerPort, plugin.thisserverip + ":" + plugin.thisserverport);
+                plugin.sqlLibrary.Query(selectCommand, plugin.sqlConnection, list =>
+                {
+                    if (list == null) { return; }
+                    foreach (Dictionary<string, object> entry in list)
+                    {
+                        //If its set to sync we can carry on
+                        if (entry["state"].ToString() == "Transferring")
+                        {
+                            if (config._ServerSettings.ShowDebugMsg) plugin.Puts("SyncTransfere Syned With Other Server @ " + ServerIP + ":" + ServerPort);
+                            LoadingSync = true;
+                            TransferOpenNexus();
+                            Invoke(() => DataChecker(), 1f);
+                        }
+                    }
+                });
+                //Rerun again after delay
+                Invoke(() =>
+                {
+                    if (config._ServerSettings.ShowDebugMsg) plugin.Puts("SyncTransfere Waiting For Other Server @ " + ServerIP + ":" + ServerPort);
+                    TransfereWait();
+                }, config._ServerSettings.ServerDelay);
             }
 
             private void Progress()
@@ -2978,8 +2974,17 @@ namespace Oxide.Plugins
                     if (!_isTransferring)
                     {
                         plugin.UpdateSync(plugin.thisserverip + ":" + plugin.thisserverport, ServerIP + ":" + ServerPort, "Transferring");
-                        TransferOpenNexus();
-                        Invoke(() => DataChecker(), 1f);
+                        _isTransferring = true;
+                        LoadingSync = false;
+                        plugin.MessageScreen("Waiting for other server", FerryPos.position, 30f);
+                        //Create a fail safe for if other ferry never arrives.
+                        Invoke(() =>
+                        {
+                            plugin.MessageScreen("Other servers ferry failed to reach transfere point in time.", FerryPos.position, 30f,config._FerrySettings.TransfereSyncTime - 5);
+                            _isTransferring = false;
+                            LoadingSync = true;
+                        }, config._FerrySettings.TransfereSyncTime);
+                        TransfereWait();
                     }
                     return;
                 }
@@ -3011,6 +3016,7 @@ namespace Oxide.Plugins
                     plugin.EjectEntitys(GetFerryContents(), DockedEntitys, EjectionZone.position);
                     //Delay castoff after eject encase players want to get back on.
                     ServerSynced = false;
+                    plugin.MessageScreen("Ferry casting off in " + config._FerrySettings.EjectDelay + " seconds", FerryPos.position, 50f);
                     Invoke(() => { ServerSynced = true; }, config._FerrySettings.EjectDelay);
                     plugin.UpdateSync(plugin.thisserverip + ":" + plugin.thisserverport, ServerIP + ":" + ServerPort, "CastingOff");
                     return;
@@ -3143,7 +3149,6 @@ namespace Oxide.Plugins
 
             private void TransferOpenNexus()
             {
-                _isTransferring = true;
                 List<BaseNetworkable> list = new List<BaseNetworkable>();
                 _state = OpenNexusFerry.State.Transferring;
                 //Get all entitys on the  ferry to transfere
