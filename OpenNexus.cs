@@ -1,7 +1,4 @@
-//None of this code is to be used in any paid project/plugins
-
-//ToDo:
-//Run though every item to again to check for bugs.
+//None of this code is to be used in any paid projects/plugins
 using Facepunch;
 using Facepunch.Utility;
 using Network;
@@ -16,7 +13,6 @@ using Oxide.Core.Database;
 using Rust;
 using Oxide.Core.Plugins;
 using Newtonsoft.Json;
-using UnityEngine.AI;
 using System.Linq;
 
 namespace Oxide.Plugins
@@ -31,8 +27,8 @@ namespace Oxide.Plugins
         private string[] BaseVehicle = { "rowboat", "rhib", "scraptransporthelicopter", "minicopter.entity", "submarinesolo.entity", "submarineduo.entity" };
 
         //Permissions
-        private static readonly string permbypass = "OpenNexus.bypass"; //bypass the single server at a time limit
-        private static readonly string permadmin = "OpenNexus.admin";   //Allows to use admin commands
+        private readonly string permbypass = "OpenNexus.bypass"; //bypass the single server at a time limit
+        private readonly string permadmin = "OpenNexus.admin";   //Allows to use admin commands
 
         //Memory
         public Dictionary<Vector3, Quaternion> FoundIslands = new Dictionary<Vector3, Quaternion>();
@@ -198,7 +194,7 @@ namespace Oxide.Plugins
                  timer.Once(config._ServerSettings.ServerDelay, () =>
                   {
                       //Reset players data
-                      foreach (BasePlayer bp in BasePlayer.activePlayerList){if (bp.IsConnected && !bp.IsNpc){NextTick(() =>{UpdatePlayers(thisserverip + ":" + thisserverport, thisserverip + ":" + thisserverport, "Playing", bp.UserIDString);});}}
+                      foreach (BasePlayer bp in BasePlayer.activePlayerList) { if (bp.IsConnected && !bp.IsNpc) { NextTick(() => { UpdatePlayers(thisserverip + ":" + thisserverport, thisserverip + ":" + thisserverport, "Playing", bp.UserIDString); }); } }
                   });
              });
         }
@@ -310,7 +306,7 @@ namespace Oxide.Plugins
                     foreach (BasePlayer bp in KillBots) { if (!Bots.Contains(bp) && !bp.IsNpc) { Bots.Add(bp); } }
                     Vis.Entities<BasePlayer>(OpenFerry.transform.position + (OpenFerry.transform.rotation * Vector3.forward * -12), 14f, KillBots);
                     foreach (BasePlayer bp in KillBots) { if (!Bots.Contains(bp) && !bp.IsNpc) { Bots.Add(bp); } }
-                    foreach (BasePlayer bot in Bots){if (!IsSteamId(bot.UserIDString)){bot.Kill();}}
+                    foreach (BasePlayer bot in Bots) { if (!IsSteamId(bot.UserIDString)) { bot.Kill(); } }
                     if (config._ServerSettings.ShowDebugMsg) plugin.Puts("Read " + String.Format("{0:0.##}", (double)(entry["data"].ToString().Length / 1024f)) + " Kb");
                     return;
                 }
@@ -392,7 +388,6 @@ namespace Oxide.Plugins
                     //Redirect player to last server they were in.
                     if (entry["target"].ToString() != thisserverip + ":" + thisserverport && entry["state"].ToString() != "Moving" && entry["state"].ToString() != "Ready" && connection != null)
                     {
-                        if (BasePlayer.FindByID(steamid).IPlayer.HasPermission(permbypass)) { return; }
                         string[] server = entry["target"].ToString().Split(':');
                         if (config._ServerSettings.ShowDebugMsg) Puts("ReadPlayers Redirecting  " + steamid);
                         ConsoleNetwork.SendClientCommand(connection, "nexus.redirect", new object[] { server[0], server[1] });
@@ -442,8 +437,8 @@ namespace Oxide.Plugins
         {
             sqlConnection = sqlLibrary.OpenDb(host, port, database, username, password, this);
             // Failed message
-            if (sqlConnection == null || sqlConnection.Con == null){Puts("Couldn't open the MySQL Database: {0} ", sqlConnection.Con.State.ToString());}
-            else{Puts("MySQL server connected: " + host);CreatesTables();}
+            if (sqlConnection == null || sqlConnection.Con == null) { Puts("Couldn't open the MySQL Database: {0} ", sqlConnection.Con.State.ToString()); }
+            else { Puts("MySQL server connected: " + host); CreatesTables(); }
         }
 
         private void CreatesTables()
@@ -501,7 +496,7 @@ namespace Oxide.Plugins
         {
             //Remove Uncoded NexusFerry / NexusIsland
             BaseEntity component = gameObject.GetComponent<BaseEntity>();
-            if (component != null){if ((component.prefabID == 2508295857 || component.prefabID == 2795004596) && component.OwnerID == 0) { component.Kill(); }}
+            if (component != null) { if ((component.prefabID == 2508295857 || component.prefabID == 2795004596) && component.OwnerID == 0) { component.Kill(); } }
         }
 
         private void OnPlayerSetInfo(Network.Connection connection, string name, string value)
@@ -511,6 +506,7 @@ namespace Oxide.Plugins
             if (ProcessingPlayers.Contains(connection.ownerid)) return;
             ProcessingPlayers.Add(connection.ownerid);
             timer.Once(10f, () => ProcessingPlayers.Remove(connection.ownerid));
+            if (BasePlayer.FindByID(connection.ownerid).IPlayer.HasPermission(permbypass)) { return; }
             if (config._ServerSettings.ShowDebugMsg) Puts("Checking if " + connection.ownerid.ToString() + " is already on any OpenNexus servers");
             ReadPlayers(thisserverip + ":" + thisserverport, connection.ownerid, connection);
         }
@@ -542,7 +538,7 @@ namespace Oxide.Plugins
                     if (Ferry != null)
                     {
                         //Dissconnect database
-                        if (sqlConnection != null && sqlConnection.Con != null){sqlLibrary.CloseDb(sqlConnection);}
+                        if (sqlConnection != null && sqlConnection.Con != null) { sqlLibrary.CloseDb(sqlConnection); }
                         //Updates ferry contents list and ejects it to dock.
                         Ferry.UpdateDockedEntitys();
                         EjectEntitys(Ferry.GetFerryContents(), Ferry.DockedEntitys, Ferry.EjectionZone.position);
@@ -560,7 +556,7 @@ namespace Oxide.Plugins
             //Edge teleport
             if (config._ServerSettings.EdgeTeleporter)
             {
-                foreach (BaseNetworkable vehicle in BaseNetworkable.serverEntities)
+                foreach (BaseNetworkable vehicle in BaseNetworkable.serverEntities.ToArray())
                 {
                     if (vehicle is BaseVehicle)
                     {
@@ -584,7 +580,7 @@ namespace Oxide.Plugins
                 try
                 {
                     //Still starting so run a timer again in 10 sec to check.
-                    if (Rust.Application.isLoading){Fstartup();return;}
+                    if (Rust.Application.isLoading) { Fstartup(); return; }
                 }
                 catch { }
                 //Starup script now.
@@ -679,6 +675,10 @@ namespace Oxide.Plugins
                     }
                 }
             }
+            //Remove dead Ferry turrets at junk collection (happens on reboots might shoot though low ground maps)
+            List<NPCAutoTurret> Z = new List<NPCAutoTurret>();
+            Vis.Entities<NPCAutoTurret>(Vector3.zero, 25f, Z);
+            foreach (NPCAutoTurret ss in Z) { UnityEngine.GameObject.DestroyImmediate(ss); }
             //Add edge teleport
             if (config._ServerSettings.EdgeTeleporter) { foreach (BaseNetworkable vehicle in BaseNetworkable.serverEntities) { if (vehicle is BaseVehicle && vehicle.GetComponent<EdgeTeleport>() == null) vehicle.gameObject.AddComponent<EdgeTeleport>(); } }
         }
@@ -694,8 +694,8 @@ namespace Oxide.Plugins
         private void DestroyMeshCollider(BaseEntity ent) { foreach (var mesh in ent.GetComponentsInChildren<MeshCollider>()) { UnityEngine.Object.DestroyImmediate(mesh); } }
         private void DestroyGroundComp(BaseEntity ent)
         {
-            foreach (var groundmissing in ent.GetComponentsInChildren<DestroyOnGroundMissing>()) { UnityEngine.Object.DestroyImmediate(groundmissing); }
-            foreach (var groundwatch in ent.GetComponentsInChildren<GroundWatch>()) { UnityEngine.Object.DestroyImmediate(groundwatch); }
+            foreach (var groundmissing in ent.GetComponentsInChildren<DestroyOnGroundMissing>().ToArray()) { UnityEngine.Object.DestroyImmediate(groundmissing); }
+            foreach (var groundwatch in ent.GetComponentsInChildren<GroundWatch>().ToArray()) { UnityEngine.Object.DestroyImmediate(groundwatch); }
         }
 
         private void AddLock(BaseEntity ent, string data)
@@ -751,48 +751,19 @@ namespace Oxide.Plugins
             }
         }
 
-        //Handle moving players
-        private void TeleportPlayer(BasePlayer player, Vector3 pos)
-        {
-            try
-            {
-                if (player.IsConnected)
-                {
-                    player.EnsureDismounted();
-                    if (player.HasParent()) { player.SetParent(null, true, true); }
-                    player.RemoveFromTriggers();
-                    player.SetServerFall(true);
-                    player.SetPlayerFlag(BasePlayer.PlayerFlags.ReceivingSnapshot, true);
-                }
-                player.Teleport(pos);
-                if (player.IsConnected)
-                {
-                    player.SendEntityUpdate();
-                }
-                player.UpdateNetworkGroup();
-                player.SendNetworkUpdateImmediate(false);
-            }
-            finally
-            {
-                player.SetServerFall(false);
-                player.ForceUpdateTriggers();
-            }
-        }
-
         private bool TryFindEjectionPosition(out Vector3 position, Vector3 spawnpos, float radius = 1f)
         {
-            //try 10 times or drop on center
+            //try 100 times or drop on center
             Vector3 position2;
+            Vector3 position3;
             for (int i = 0; i < 100; i++)
             {
                 position2 = new Vector3(Core.Random.Range(spawnpos.x - 10f, spawnpos.x + 10f), spawnpos.y + 2.5f, Core.Random.Range(spawnpos.z - 10f, spawnpos.z + 10f));
-                NavMeshHit hit;
-                if (NavMesh.SamplePosition(position2, out hit, 10, -1))
+
+                if (!TransformUtil.GetGroundInfo(position2, out position2, out position3, 10, 413204481, null))
                 {
-                    if (position2.y < hit.position.y)
-                    {
-                        position2.y = hit.position.y + 0.2f;
-                    }
+                    position = spawnpos + new Vector3(0, 5, 0);
+                    return false;
                 }
                 if (GamePhysics.CheckSphere(position2, radius, Layers.Mask.Construction | Layers.Server.Deployed | Layers.World | Layers.Server.Players | Layers.Mask.Vehicle_World | Layers.Server.VehiclesSimple | Layers.Server.NPCs, QueryTriggerInteraction.Ignore)) { continue; }
                 position = position2;
@@ -806,7 +777,7 @@ namespace Oxide.Plugins
         {
             //Ejects anything left on Ferry to dock.
             if (currentcontents == null || currentcontents.Count == 0 || DockedEntitys == null || DockedEntitys.Count == 0) { return; }
-            foreach (BaseEntity entity in currentcontents)
+            foreach (BaseEntity entity in currentcontents.ToArray())
             {
                 if (entity != null && DockedEntitys.Contains(entity))
                 {
@@ -821,12 +792,36 @@ namespace Oxide.Plugins
                     {
                         if (entity is BasePlayer)
                         {
-                            plugin.TeleportPlayer(entity.ToPlayer(), serverPosition);
+                            BasePlayer player = entity as BasePlayer;
+                            try
+                            {
+                                if (player.IsConnected)
+                                {
+                                    player.EnsureDismounted();
+                                    if (player.HasParent()) { player.SetParent(null, true, true); }
+                                    player.RemoveFromTriggers();
+                                    player.SetServerFall(true);
+                                    player.SetPlayerFlag(BasePlayer.PlayerFlags.ReceivingSnapshot, true);
+                                }
+                                player.Teleport(serverPosition);
+                                if (player.IsConnected)
+                                {
+                                    player.SendEntityUpdate();
+                                }
+                                player.UpdateNetworkGroup();
+                                player.SendNetworkUpdateImmediate(false);
+                            }
+                            finally
+                            {
+                                player.SetServerFall(false);
+                                player.ForceUpdateTriggers();
+                            }
                         }
                         else
                         {
                             entity.SetParent(null, false, false);
                             entity.ServerPosition = serverPosition;
+                            entity.ClientRPC(null, "Stand");
                             entity.SendNetworkUpdateImmediate(false);
                         }
                         continue;
@@ -901,7 +896,7 @@ namespace Oxide.Plugins
                         teams += playerTeam.teamLeader.ToString() + ",";
                         foreach (ulong p in playerTeam.members)
                         {
-                            try{teams += p.ToString() + "<DN>" + BasePlayer.FindAwakeOrSleeping(p.ToString()).displayName + ",";}catch { }
+                            try { teams += p.ToString() + "<DN>" + BasePlayer.FindAwakeOrSleeping(p.ToString()).displayName + ","; } catch { }
                         }
                     }
                 }
@@ -917,26 +912,27 @@ namespace Oxide.Plugins
             bool alreadyinteam = false;
             foreach (var playerTeam in RelationshipManager.ServerInstance.teams.Values)
             {
-                foreach (ulong p in playerTeam.members){playersinteams.Add(p);}
-                if (playerTeam.members.Contains(player.userID)){alreadyinteam = true;}
+                foreach (ulong p in playerTeam.members) { playersinteams.Add(p); }
+                if (playerTeam.members.Contains(player.userID)) { alreadyinteam = true; }
             }
-            if (alreadyinteam){return;}
+            if (alreadyinteam) { return; }
             string[] teams = teamdata.Split(',');
             ulong _ulong;
             Unsubscribe("OnTeamCreated");
             RelationshipManager.PlayerTeam aTeam = RelationshipManager.ServerInstance.CreateTeam();
             if (ulong.TryParse(teams[0], out _ulong))
             {
-                if (playersinteams.Contains(_ulong)){aTeam.teamLeader = player.userID;}
-                else{aTeam.teamLeader = _ulong;}
+                if (playersinteams.Contains(_ulong)) { aTeam.teamLeader = player.userID; }
+                else { aTeam.teamLeader = _ulong; }
                 for (int i = 1; i < teams.Length - 1; i++)
                 {
                     string[] userdetails = teams[i].Split(new string[] { "<DN>" }, StringSplitOptions.None);
                     if (!ulong.TryParse(userdetails[0], out _ulong)) { continue; }
                     if (playersinteams.Contains(_ulong)) { Puts("Player already in another team"); continue; }
                     playersinteams.Add(_ulong);
-                    if (_ulong == player.userID){aTeam.AddPlayer(player);}
-                    else{
+                    if (_ulong == player.userID) { aTeam.AddPlayer(player); }
+                    else
+                    {
                         BasePlayer bp = BasePlayer.FindAwakeOrSleeping(_ulong.ToString());
                         if (bp == null)
                         {
@@ -970,7 +966,7 @@ namespace Oxide.Plugins
         {
             //Build database of players current modifiers
             string mods = "";
-            if (player != null) { foreach (Modifier m in player.modifiers.All) { mods += (m.Type.ToString()) + "," + (m.Source.ToString()) + "," + (m.Value.ToString()) + "," + (m.Duration.ToString()) + "," + (m.TimeRemaining.ToString()) + "|"; } }
+            if (player != null) { foreach (Modifier m in player.modifiers.All) { mods += (m.Type.ToString()) + "," + (m.Source.ToString()) + "," + (m.Value.ToString()) + "," + (m.Duration.ToString()) + "," + (m.TimeRemaining.ToString()) + "<MF>"; } }
             return mods;
         }
 
@@ -982,7 +978,7 @@ namespace Oxide.Plugins
                 List<ModifierDefintion> md = new List<ModifierDefintion>();
                 foreach (string mod in mods)
                 {
-                    if (mod == null || mod == "") { continue; }
+                    if (mod == null || mod == "" || !mod.Contains(",")) { continue; }
                     string[] m = mod.Split(',');
                     if (m.Length == 5)
                     {
@@ -1009,8 +1005,9 @@ namespace Oxide.Plugins
                                 break;
                         }
                         moddef.source = Modifier.ModifierSource.Tea;
-                        moddef.duration = float.Parse(m[4]);
-                        moddef.value = float.Parse(m[2]);
+                        float _float;
+                        if (float.TryParse(m[2], out _float)) { moddef.value = _float; }
+                        if (float.TryParse(m[4], out _float)) { moddef.duration = _float; }
                         md.Add(moddef);
                     }
                 }
@@ -1023,7 +1020,7 @@ namespace Oxide.Plugins
         {
             //Build data base of players unloacked blueprints
             string bps = "";
-            if (player != null) { foreach (var blueprint in player.PersistantPlayerInfo.unlockedItems) { bps += blueprint + "|"; } }
+            if (player != null) { foreach (var blueprint in player.PersistantPlayerInfo.unlockedItems) { bps += blueprint + "<BP>"; } }
             return bps;
         }
 
@@ -1166,7 +1163,7 @@ namespace Oxide.Plugins
                         if (packets.Key.Contains("BasePlayerInventory"))
                         {
                             BaseSettings settings = new BaseSettings();
-                            settings.ProcessPacket(packets.Value, null, "null", 3, null, CreatedEntitys);
+                            settings.ProcessPacket(packets.Value, null, 3, null, CreatedEntitys);
                             continue;
                         }
                         if (packets.Key.Contains("BasePlayer"))
@@ -1244,8 +1241,8 @@ namespace Oxide.Plugins
                     }
                     if (packets.Key.Contains("BaseHorseInventory"))
                     {
-                          BaseSettings settings = new BaseSettings();
-                        settings.ProcessPacket(packets.Value, null, "null", 3, null, CreatedEntitys);
+                        BaseSettings settings = new BaseSettings();
+                        settings.ProcessPacket(packets.Value, null, 3, null, CreatedEntitys);
                         continue;
                     }
                     if (packets.Key.Contains("BaseHorse"))
@@ -1263,19 +1260,21 @@ namespace Oxide.Plugins
                     if (packets.Key.Contains("ModularCarItems"))
                     {
                         //Delay in these ones to allow car to be spawned
-                        NextTick(() => {
+                        NextTick(() =>
+                        {
                             //Process module car parts
                             BaseSettings settings = new BaseSettings();
-                            settings.ProcessPacket(packets.Value, SpawnedCars, "null",1);
+                            settings.ProcessPacket(packets.Value, SpawnedCars, 1);
                         });
                         continue;
                     }
                     if (packets.Key.Contains("ModularCarCamper"))
                     {
-                        NextTick(() => {             
+                        NextTick(() =>
+                        {
                             //Process camper module
                             BaseSettings settings = new BaseSettings();
-                            settings.ProcessPacket(packets.Value, SpawnedCars, "null", 0);
+                            settings.ProcessPacket(packets.Value, SpawnedCars, 0);
                         });
                         continue;
                     }
@@ -1293,7 +1292,7 @@ namespace Oxide.Plugins
                     }
                 }
                 //Max out retry counter to end retrying
-                if (parent is OpenNexusFerry){(parent as OpenNexusFerry).retrys = 99;}
+                if (parent is OpenNexusFerry) { (parent as OpenNexusFerry).retrys = 99; }
             }
             //Return list of everything created.
             return CreatedEntitys;
@@ -1603,7 +1602,7 @@ namespace Oxide.Plugins
                     int s = 0;
                     foreach (var moduleEntity in mc.AttachedModuleEntities)
                     {
-                        if (s != settings.container) { s++;  continue; }
+                        if (s != settings.container) { s++; continue; }
                         VehicleModuleEngine vehicleModuleEngine = moduleEntity as VehicleModuleEngine;
                         if (vehicleModuleEngine != null)
                         {
@@ -1623,7 +1622,7 @@ namespace Oxide.Plugins
                     }
                 }
             }
-        } 
+        }
 
         private Dictionary<string, BaseNetworkable> ProcessBasePlayer(List<Dictionary<string, string>> packets, BaseEntity FerryPos)
         {
@@ -1692,7 +1691,7 @@ namespace Oxide.Plugins
             return null;
         }
 
-        private void GiveContents(string ownerid, int id, float condition, int amount, ulong skinid, int code, int slot, int container , string mods, Dictionary<string, BaseNetworkable> CreatedEntitys)
+        private void GiveContents(string ownerid, int id, float condition, int amount, ulong skinid, int code, int slot, int container, string mods, Dictionary<string, BaseNetworkable> CreatedEntitys)
         {
             if (CreatedEntitys.ContainsKey(ownerid))
             {
@@ -1715,11 +1714,8 @@ namespace Oxide.Plugins
                         //put into horse inventory
                         Item item = BuildItem(id, amount, skinid, condition, code, Wmods);
                         if (item == null) return;
-                        if (!item.MoveToContainer(rh.inventory, slot, true, true))
-                        {
-                                item.position = slot;
-                                rh.inventory.Insert(item);
-                        }
+                        item.position = slot;
+                        rh.inventory.Insert(item);
                         return;
                     }
                     //BasePlayers items
@@ -1732,13 +1728,13 @@ namespace Oxide.Plugins
                             //Put back in players inventory
                             case 0:
                                 item = BuildItem(id, amount, skinid, condition, code, Wmods);
-                                if(item != null)
+                                if (item != null)
                                 {
-                                    if(!item.MoveToContainer(bp.inventory.containerWear, slot, true, true))
+                                    if (!item.MoveToContainer(bp.inventory.containerWear, slot, true, true))
                                     {
-                                            item.position = slot;
-                                            bp.inventory.containerWear.Insert(item);
-                                     }
+                                        item.position = slot;
+                                        bp.inventory.containerWear.Insert(item);
+                                    }
                                 }
                                 break;
                             case 1:
@@ -1747,9 +1743,9 @@ namespace Oxide.Plugins
                                 {
                                     if (!item.MoveToContainer(bp.inventory.containerBelt, slot, true, true))
                                     {
-                                            item.position = slot;
-                                            bp.inventory.containerBelt.Insert(item);
-                                      }
+                                        item.position = slot;
+                                        bp.inventory.containerBelt.Insert(item);
+                                    }
                                 }
                                 break;
                             case 2:
@@ -1758,8 +1754,8 @@ namespace Oxide.Plugins
                                 {
                                     if (!item.MoveToContainer(bp.inventory.containerMain, slot, true, true))
                                     {
-                                            item.position = slot;
-                                            bp.inventory.containerMain.Insert(item);
+                                        item.position = slot;
+                                        bp.inventory.containerMain.Insert(item);
                                     }
                                 }
                                 break;
@@ -1773,7 +1769,7 @@ namespace Oxide.Plugins
         private Item BuildItem(int id, int amount, ulong skin, float condition, int code, List<string> mods)
         {
             Item item = CreateItem(id, amount, skin, condition, code);
-            if(item == null) { return null; }
+            if (item == null) { return null; }
             //Setup guns so they work when given to player
             BaseProjectile weapon = item.GetHeldEntity() as BaseProjectile;
             if (weapon != null) { weapon.primaryMagazine.contents = weapon.primaryMagazine.capacity; }
@@ -1786,12 +1782,18 @@ namespace Oxide.Plugins
                     {
                         //Apply mods if its a gun
                         string[] modsetting = mod.Split('=');
-                        if (modsetting.Length != 2) continue;
+                        if (modsetting.Length != 3) continue;
+                        if (modsetting[0] == null || modsetting[1] == null || modsetting[0] == null) { continue; }
                         int _int;
+                        int _int2;
                         float _float;
-                        if (int.TryParse(modsetting[0], out _int) && float.TryParse(modsetting[1], out _float))
+                        if (int.TryParse(modsetting[0], out _int) && float.TryParse(modsetting[1], out _float) && int.TryParse(modsetting[2], out _int2))
                         {
-                            item.contents.AddItem(CreateItem(_int, 1, 0, _float, code, 0).info, 1);
+                            try
+                            {
+                                item.contents.AddItem(CreateItem(_int, _int2, 0, _float, code, 0).info, _int2);
+                            }
+                            catch { }
                         }
                     }
                 }
@@ -1845,7 +1847,7 @@ namespace Oxide.Plugins
                     //Label items with wich container they came from
                     if (baseplayer.inventory.containerWear.itemList != null)
                     {
-                        foreach (Item item in baseplayer.inventory.containerWear.itemList)
+                        foreach (Item item in baseplayer.inventory.containerWear.itemList.ToArray())
                         {
                             if (item != null)
                             {
@@ -1856,7 +1858,7 @@ namespace Oxide.Plugins
                     }
                     if (baseplayer.inventory.containerBelt.itemList != null)
                     {
-                        foreach (Item item in baseplayer.inventory.containerBelt.itemList)
+                        foreach (Item item in baseplayer.inventory.containerBelt.itemList.ToArray())
                         {
                             if (item != null)
                             {
@@ -1867,7 +1869,7 @@ namespace Oxide.Plugins
                     }
                     if (baseplayer.inventory.containerMain.itemList != null)
                     {
-                        foreach (Item item in baseplayer.inventory.containerMain.itemList)
+                        foreach (Item item in baseplayer.inventory.containerMain.itemList.ToArray())
                         {
                             if (item != null)
                             {
@@ -1909,7 +1911,7 @@ namespace Oxide.Plugins
                     itemlist = new List<Dictionary<string, string>>();
                     if (horse.inventory.itemList != null)
                     {
-                        foreach (Item item in horse.inventory.itemList)
+                        foreach (Item item in horse.inventory.itemList.ToArray())
                         {
                             if (item != null)
                             {
@@ -1982,7 +1984,7 @@ namespace Oxide.Plugins
             if (Backpack != null)
             {
                 //Create list of items in backpack
-                foreach(Item item in Backpack.itemList)
+                foreach (Item item in Backpack.itemList.ToArray())
                 {
                     if (item != null)
                     {
@@ -2004,7 +2006,7 @@ namespace Oxide.Plugins
                 if (Backpack != null)
                 {
                     BaseSettings settings = new BaseSettings();
-                    settings.ProcessPacket(packets,null,"null",2,Backpack);
+                    settings.ProcessPacket(packets, null, 2, Backpack);
                 }
             }
         }
@@ -2067,7 +2069,7 @@ namespace Oxide.Plugins
             //Item packet
             string code = "0";
             string mods = "";
-            if (item.info.shortname != null &&(item.info.shortname == "car.key" || item.info.shortname == "door.key"))
+            if (item.info.shortname != null && (item.info.shortname == "car.key" || item.info.shortname == "door.key"))
             {
                 //Add keys code data
                 code = (item.instanceData.dataInt.ToString());
@@ -2077,7 +2079,7 @@ namespace Oxide.Plugins
             {
                 foreach (var mod in item.contents.itemList)
                 {
-                    if (mod.info.itemid != 0) { mods += (mod.info.itemid.ToString() + "=" + mod.condition.ToString() + "_"); }
+                    if (mod.info.itemid != 0) { mods += (mod.info.itemid.ToString() + "=" + mod.condition.ToString() + "=" + mod.amount.ToString() + "_"); }
                 }
             }
             var itemdata = new Dictionary<string, string>
@@ -2097,10 +2099,10 @@ namespace Oxide.Plugins
 
         private List<Dictionary<string, string>> ModularItems(ItemContainer storageInventory, string thiscarID, string socket)
         {
-            List<Dictionary<string, string>>  itemlist = new List<Dictionary<string, string>>();
+            List<Dictionary<string, string>> itemlist = new List<Dictionary<string, string>>();
             if (storageInventory != null)
             {
-                foreach (Item item in storageInventory.itemList)
+                foreach (Item item in storageInventory.itemList.ToArray())
                 {
                     if (item != null)
                     {
@@ -2147,7 +2149,7 @@ namespace Oxide.Plugins
                     {
                         itemlist = new List<Dictionary<string, string>>();
                         //Store position of stoage container
-                        foreach (Item item in vehicleModuleCamper.activeStorage.Get(true).inventory.itemList)
+                        foreach (Item item in vehicleModuleCamper.activeStorage.Get(true).inventory.itemList.ToArray())
                         {
                             if (item != null)
                             {
@@ -2155,7 +2157,7 @@ namespace Oxide.Plugins
                                 item.Remove();
                             }
                         }
-                        foreach (Item item in vehicleModuleCamper.activeLocker.Get(true).inventory.itemList)
+                        foreach (Item item in vehicleModuleCamper.activeLocker.Get(true).inventory.itemList.ToArray())
                         {
                             if (item != null)
                             {
@@ -2163,7 +2165,7 @@ namespace Oxide.Plugins
                                 item.Remove();
                             }
                         }
-                        foreach (Item item in vehicleModuleCamper.activeBbq.Get(true).inventory.itemList)
+                        foreach (Item item in vehicleModuleCamper.activeBbq.Get(true).inventory.itemList.ToArray())
                         {
                             if (item != null)
                             {
@@ -2317,7 +2319,6 @@ namespace Oxide.Plugins
                 ulong skin = 0;
                 float condition = 0;
                 int code = 0;
-                int slot = 0;
                 List<string> mods = new List<string>();
                 foreach (string st in itmlist)
                 {
@@ -2344,16 +2345,18 @@ namespace Oxide.Plugins
                             if (int.TryParse(info[1], out _int)) { code = _int; }
                             break;
                         case "mods":
-                            if (info[1] != "") { string[] wmod = info[1].Split('_'); foreach (string w in wmod) { mods.Add(w); } }
+                            if (info[1] != "") { string[] wmod = info[1].Split(new string[] { "_" }, System.StringSplitOptions.RemoveEmptyEntries); foreach (string w in wmod) { mods.Add(w); } }
                             break;
                         case "slot":
-                            if (int.TryParse(info[1], out _int)) { slot = _int; }
-                            Item i = BuildItem(id, amount, skin, condition, code, mods);
-                            if(i == null) { continue; }
-                            if(!i.MoveToContainer(ice.inventory, slot, true, true))
+                            if (int.TryParse(info[1], out _int))
                             {
-                                    i.position = slot;
+                                Item i = BuildItem(id, amount, skin, condition, code, mods.ToList());
+                                if (i == null) { continue; }
+                                if (!i.MoveToContainer(ice.inventory, _int, true, true))
+                                {
+                                    i.position = _int;
                                     ice.inventory.Insert(i);
+                                }
                             }
                             break;
                     }
@@ -2511,9 +2514,9 @@ namespace Oxide.Plugins
             //Use net id so can relink
             if (parent) { baseentity += "<Parent>" + be.net.ID + "|"; }
             else { baseentity += "<Child>" + be.net.ID + "|"; }
-            baseentity += be.prefabID.ToString() + "|" + be.transform.localPosition.ToString() + "|" + be.transform.localRotation.ToString() + "|"+be.transform.localScale.ToString() + "|"+be.skinID.ToString() + "|"+be.MaxHealth().ToString() + "|"+be.Health().ToString() + "|";
+            baseentity += be.prefabID.ToString() + "|" + be.transform.localPosition.ToString() + "|" + be.transform.localRotation.ToString() + "|" + be.transform.localScale.ToString() + "|" + be.skinID.ToString() + "|" + be.MaxHealth().ToString() + "|" + be.Health().ToString() + "|";
             //Get all flags
-            baseentity += "<BEF>" + be.HasFlag(BaseEntity.Flags.Broken)+"<BEF>" + be.HasFlag(BaseEntity.Flags.Busy)+"<BEF>" + be.HasFlag(BaseEntity.Flags.Debugging)+"<BEF>" + be.HasFlag(BaseEntity.Flags.Disabled)+"<BEF>" + be.HasFlag(BaseEntity.Flags.Locked)+"<BEF>" + be.HasFlag(BaseEntity.Flags.On)+"<BEF>" + be.HasFlag(BaseEntity.Flags.OnFire)+"<BEF>" + be.HasFlag(BaseEntity.Flags.Open)+"<BEF>" + be.HasFlag(BaseEntity.Flags.Placeholder)+"<BEF>" + be.HasFlag(BaseEntity.Flags.Protected)+"<BEF>" + be.HasFlag(BaseEntity.Flags.Reserved1)+"<BEF>" + be.HasFlag(BaseEntity.Flags.Reserved10)+"<BEF>" + be.HasFlag(BaseEntity.Flags.Reserved11)+"<BEF>" + be.HasFlag(BaseEntity.Flags.Reserved2)+"<BEF>" + be.HasFlag(BaseEntity.Flags.Reserved3)+ "<BEF>" + be.HasFlag(BaseEntity.Flags.Reserved4)+"<BEF>" + be.HasFlag(BaseEntity.Flags.Reserved5)+"<BEF>" + be.HasFlag(BaseEntity.Flags.Reserved6)+"<BEF>" + be.HasFlag(BaseEntity.Flags.Reserved7)+"<BEF>" + be.HasFlag(BaseEntity.Flags.Reserved8)+"<BEF>" + be.HasFlag(BaseEntity.Flags.Reserved9)+"|";
+            baseentity += "<BEF>" + be.HasFlag(BaseEntity.Flags.Broken) + "<BEF>" + be.HasFlag(BaseEntity.Flags.Busy) + "<BEF>" + be.HasFlag(BaseEntity.Flags.Debugging) + "<BEF>" + be.HasFlag(BaseEntity.Flags.Disabled) + "<BEF>" + be.HasFlag(BaseEntity.Flags.Locked) + "<BEF>" + be.HasFlag(BaseEntity.Flags.On) + "<BEF>" + be.HasFlag(BaseEntity.Flags.OnFire) + "<BEF>" + be.HasFlag(BaseEntity.Flags.Open) + "<BEF>" + be.HasFlag(BaseEntity.Flags.Placeholder) + "<BEF>" + be.HasFlag(BaseEntity.Flags.Protected) + "<BEF>" + be.HasFlag(BaseEntity.Flags.Reserved1) + "<BEF>" + be.HasFlag(BaseEntity.Flags.Reserved10) + "<BEF>" + be.HasFlag(BaseEntity.Flags.Reserved11) + "<BEF>" + be.HasFlag(BaseEntity.Flags.Reserved2) + "<BEF>" + be.HasFlag(BaseEntity.Flags.Reserved3) + "<BEF>" + be.HasFlag(BaseEntity.Flags.Reserved4) + "<BEF>" + be.HasFlag(BaseEntity.Flags.Reserved5) + "<BEF>" + be.HasFlag(BaseEntity.Flags.Reserved6) + "<BEF>" + be.HasFlag(BaseEntity.Flags.Reserved7) + "<BEF>" + be.HasFlag(BaseEntity.Flags.Reserved8) + "<BEF>" + be.HasFlag(BaseEntity.Flags.Reserved9) + "|";
             //Check if ground
             StabilityEntity s = be as StabilityEntity;
             if (s == null) { baseentity += "null|"; }
@@ -2534,7 +2537,7 @@ namespace Oxide.Plugins
                 CodeLock codelock = be.GetSlot(0) as CodeLock;
                 if (codelock != null)
                 {
-                    baseentity += "<CodeLock>" + codelock.transform.localPosition+ "<CodeLock>" + codelock.transform.localRotation+ "<CodeLock>" + codelock.code+ "<CodeLock>" + codelock.HasFlag(CodeLock.Flags.Locked)+ "<CodeLock>";
+                    baseentity += "<CodeLock>" + codelock.transform.localPosition + "<CodeLock>" + codelock.transform.localRotation + "<CodeLock>" + codelock.code + "<CodeLock>" + codelock.HasFlag(CodeLock.Flags.Locked) + "<CodeLock>";
                     foreach (ulong id in codelock.whitelistPlayers) { baseentity += "<player>" + id; }
                     baseentity += "|";
                 }
@@ -2550,15 +2553,15 @@ namespace Oxide.Plugins
                 {
                     //int sl = 0;
                     List<Dictionary<string, string>> itmlist = new List<Dictionary<string, string>>();
-                    foreach(Item item in ic.inventory.itemList)
-                    { 
+                    foreach (Item item in ic.inventory.itemList.ToArray())
+                    {
                         if (item == null) { continue; }
                         {
                             itmlist.Add(Contents(item, be.OwnerID.ToString(), item.position.ToString()));
                             item.Remove();
                         }
                     }
-                    foreach (Dictionary<string, string> dict in itmlist){foreach (KeyValuePair<string, string> itz in dict) { baseentity += itz.Key + "," + itz.Value + "<item>"; }}
+                    foreach (Dictionary<string, string> dict in itmlist) { foreach (KeyValuePair<string, string> itz in dict) { baseentity += itz.Key + "," + itz.Value + "<item>"; } }
                 }
                 baseentity += "|";
             }
@@ -2581,7 +2584,7 @@ namespace Oxide.Plugins
                 Family.Add(be);
                 XML += GetBaseEntity(be);
                 //Found children of chidren so run on them
-                if (be.children != null || be.children.Count != 0){GetAllFamily(be);}
+                if (be.children != null || be.children.Count != 0) { GetAllFamily(be); }
             }
             return XML;
         }
@@ -2627,7 +2630,7 @@ namespace Oxide.Plugins
             public string mod = "";
             public string bags = "";
 
-            public void ProcessPacket(List<Dictionary<string, string>> packets, Dictionary<string, ModularCar> SpawnedCars = null, string type = "null",int containertype = -1, ItemContainer sc = null, Dictionary<string, BaseNetworkable> CreatedEntitys = null)
+            public void ProcessPacket(List<Dictionary<string, string>> packets, Dictionary<string, ModularCar> SpawnedCars = null, int containertype = -1, ItemContainer sc = null, Dictionary<string, BaseNetworkable> CreatedEntitys = null)
             {
                 foreach (Dictionary<string, string> i in packets)
                 {
@@ -2671,13 +2674,13 @@ namespace Oxide.Plugins
                                 break;
                             case "slot":
                                 if (int.TryParse(ii.Value, out _int)) { slot = _int; }
-                                switch(containertype)
+                                switch (containertype)
                                 {
                                     case 0:
                                         plugin.ProcessCamper(SpawnedCars, this);
                                         break;
                                     case 1:
-                                        plugin.ProcessModuleParts(SpawnedCars,this);
+                                        plugin.ProcessModuleParts(SpawnedCars, this);
                                         break;
                                     case 2: //Backpack
                                         string[] wmod = new string[0];
@@ -2695,7 +2698,7 @@ namespace Oxide.Plugins
                                             }
                                         }
                                         break;
-                                    case 3: //BasePlayer Invontory
+                                    case 3: //Invontorys
                                         plugin.GiveContents(ownerid.ToString(), id, condition, amount, skinid, code, slot, container, mod, CreatedEntitys);
                                         break;
                                 }
@@ -2749,13 +2752,13 @@ namespace Oxide.Plugins
                                 if (float.TryParse(ii.Value, out _float)) { calories = _float; }
                                 break;
                             case "blueprints":
-                                blueprints = ii.Value.Split('|');
+                                blueprints = ii.Value.Split(new string[] { "<BP>" }, System.StringSplitOptions.RemoveEmptyEntries);
                                 break;
                             case "team":
                                 team = ii.Value;
                                 break;
                             case "modifiers":
-                                mods = ii.Value.Split('_');
+                                mods = ii.Value.Split(new string[] { "<MF>" }, System.StringSplitOptions.RemoveEmptyEntries);
                                 break;
                             case "mods":
                                 mod = ii.Value;
@@ -2778,7 +2781,7 @@ namespace Oxide.Plugins
         }
         private class ModuleData { public List<float> condition = new List<float>(); public List<ItemModVehicleModule> modules = new List<ItemModVehicleModule>(); }
         //Open Nexus Ferry Code
-        public class OpenNexusIsland : BaseEntity{public GameObjectRef MapMarkerPrefab;public Transform MapMarkerLocation;}
+        public class OpenNexusIsland : BaseEntity { public GameObjectRef MapMarkerPrefab; public Transform MapMarkerLocation; }
         //Open Nexus Ferry Code
         public class OpenNexusFerry : BaseEntity
         {
@@ -2830,14 +2833,14 @@ namespace Oxide.Plugins
                         Vector3 closest = Vector3.zero;
                         foreach (KeyValuePair<Vector3, Quaternion> foundislands in plugin.FoundIslands)
                         {
-                            if (closest == Vector3.zero){closest = foundislands.Key;}
-                            if (Vector3.Distance(FerryPos.position, foundislands.Key) < Vector3.Distance(FerryPos.position, closest)){closest = foundislands.Key;}
+                            if (closest == Vector3.zero) { closest = foundislands.Key; }
+                            if (Vector3.Distance(FerryPos.position, foundislands.Key) < Vector3.Distance(FerryPos.position, closest)) { closest = foundislands.Key; }
                         }
                         closest.y = 0;
                         if (config._ServerSettings.ShowDebugMsg) plugin.Puts("Found nearest island @ " + closest.ToString());
                         Departure.position = closest;
                     }
-                    else{Departure.position = Docked.position + (FerryPos.rotation * Vector3.forward) * (100 + config._ServerSettings.ExtendFerryDistance);}
+                    else { Departure.position = Docked.position + (FerryPos.rotation * Vector3.forward) * (100 + config._ServerSettings.ExtendFerryDistance); }
                     Arrival.position = Docked.position + (FerryPos.rotation * Vector3.forward) * 124.2f;
                     Arrival.position = Arrival.position + (FerryPos.rotation * Vector3.right) * 73.8f;
                     Docking.position = Docked.position + (FerryPos.rotation * Vector3.forward) * 49f;
@@ -2879,7 +2882,7 @@ namespace Oxide.Plugins
                 if (_state == OpenNexusFerry.State.Waiting)
                 {
                     //Waits at waiting state
-                    if (_sinceStartedWaiting < config._FerrySettings.WaitTime){return;}
+                    if (_sinceStartedWaiting < config._FerrySettings.WaitTime) { return; }
                     SwitchToNextState();
                 }
                 if (MoveTowardsTarget()) { SwitchToNextState(); }
@@ -3151,15 +3154,15 @@ namespace Oxide.Plugins
                     //Create a packet to send to OpenNexus
                     string data = plugin.CreatePacket(list, this);
                     object injection = Interface.CallHook("OnOpenNexusWrite", data);
-                    if (injection is string){data = injection as string;}
-                    else if(injection is bool) { return; }
-                    if(data == null || data == "") { return; }
+                    if (injection is string) { data = injection as string; }
+                    else if (injection is bool) { return; }
+                    if (data == null || data == "") { return; }
                     //Add Compression
                     if (config._ServerSettings.UseCompression) { data = Convert.ToBase64String(Compression.Compress(Encoding.UTF8.GetBytes(data))); }
                     //Write packet
                     plugin.MySQLWrite(ServerIP + ":" + ServerPort, plugin.thisserverip + ":" + plugin.thisserverport, data);
                     if (config._ServerSettings.ShowDebugMsg) plugin.Puts("Written " + String.Format("{0:0.##}", (double)(data.Length / 1024f)) + " Kb");
-                    foreach (BaseEntity be in list)
+                    foreach (BaseEntity be in list.ToArray())
                     {
                         //Handle base players
                         BasePlayer bp = be as BasePlayer;
