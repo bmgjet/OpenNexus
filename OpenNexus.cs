@@ -103,6 +103,43 @@ namespace Oxide.Plugins
                 public int RedirectDelay;
             }
 
+            [JsonProperty("Status Settings:")]
+            public StatusSettings _StatusSettings = new StatusSettings();
+            internal class StatusSettings
+            {
+                [JsonProperty("Show status messages to players")]
+                public bool StatusMsg;
+                [JsonProperty("Font size")]
+                public int FontSize;
+                [JsonProperty("Font coluor")]
+                public string FontColour;
+                [JsonProperty("Fade in")]
+                public int FontFadeIn;
+                [JsonProperty("AnchorMin")]
+                public string AnchorMin;
+                [JsonProperty("AnchorMax")]
+                public string AnchorMax;
+            }
+            [JsonProperty("Plugin Settings:")]
+            public PluginSettings _PluginSettings = new PluginSettings();
+            internal class PluginSettings
+            {
+                [JsonProperty("BackPacks items (Enabled)")]
+                public bool BackPacks;
+                [JsonProperty("Economics (Enabled)")]
+                public bool Economics;
+                [JsonProperty("ZLevelsRemastered (Enabled)")]
+                public bool ZLevelsRemastered;
+                [JsonProperty("ServerRewards (Enabled)")]
+                public bool ServerRewards;
+                [JsonProperty("BluePrints (Enabled)")]
+                public bool BluePrints;
+                [JsonProperty("Modifiers (Enabled)")]
+                public bool Modifiers;
+                [JsonProperty("Parented (Enabled)")]
+                public bool Parented;
+            }
+
             public static Configuration GetNewConfiguration()
             {
                 return new Configuration
@@ -127,13 +164,32 @@ namespace Oxide.Plugins
                     {
                         MoveSpeed = 10f,
                         TurnSpeed = 0.6f,
-                        WaitTime = 120,
+                        WaitTime = 60,
                         EjectDelay = 30,
                         TransfereTime = 60,
-                        TransfereSyncTime = 180,
+                        TransfereSyncTime = 120,
                         ProgressDelay = 60,
-                        RedirectDelay = 5
+                        RedirectDelay = 5,
                     },
+                    _StatusSettings = new StatusSettings
+                    {
+                        StatusMsg = true,
+                        FontSize = 32,
+                        FontColour = "0.1 0.4 0.1 0.7",
+                        FontFadeIn = 3,
+                        AnchorMin = "0.100 0.800",
+                        AnchorMax = "0.900 0.900"
+                    },
+                    _PluginSettings = new PluginSettings
+                    {
+                        BackPacks = true,
+                        Economics = true,
+                        ZLevelsRemastered = true,
+                        ServerRewards = true,
+                        BluePrints = true,
+                        Modifiers = true,
+                        Parented = true
+                    }
                 };
             }
         }
@@ -193,14 +249,14 @@ namespace Oxide.Plugins
             sqlLibrary.ExecuteNonQuery(deleteCommand, sqlConnection);
             if (config._ServerSettings.ShowDebugMsg) Puts("cmdReset Dropped all tables");
             timer.Once(config._ServerSettings.ServerDelay, () =>
-             {
-                 CreatesTables();
-                 timer.Once(config._ServerSettings.ServerDelay, () =>
-                  {
-                      //Reset players data
-                      foreach (BasePlayer bp in BasePlayer.activePlayerList) { if (bp.IsConnected && !bp.IsNpc) { NextTick(() => { UpdatePlayers(thisserverip + ":" + thisserverport, thisserverip + ":" + thisserverport, "Playing", bp.UserIDString); }); } }
-                  });
-             });
+            {
+                CreatesTables();
+                timer.Once(config._ServerSettings.ServerDelay, () =>
+                {
+                    //Reset players data
+                    foreach (BasePlayer bp in BasePlayer.activePlayerList) { if (bp.IsConnected && !bp.IsNpc) { NextTick(() => { UpdatePlayers(thisserverip + ":" + thisserverport, thisserverip + ":" + thisserverport, "Playing", bp.UserIDString); }); } }
+                });
+            });
         }
 
         //Reloads the config with out having to restart, Not all changes will take effect
@@ -709,8 +765,9 @@ namespace Oxide.Plugins
             foreach (var groundwatch in ent.GetComponentsInChildren<GroundWatch>().ToArray()) { UnityEngine.Object.DestroyImmediate(groundwatch); }
         }
 
-        private void MessageScreen(string msg, Vector3 pos, float radius, int delay = 6)
+        private void MessageScreen(string msg, Vector3 pos, float radius, int delay = 8)
         {
+            if (config._StatusSettings.StatusMsg == false) { return; }
             List<BasePlayer> PlayersInRange = new List<BasePlayer>();
             //Scans area for players
             Vis.Entities<BasePlayer>(pos, radius, PlayersInRange);
@@ -723,7 +780,7 @@ namespace Oxide.Plugins
                     {
                         CuiHelper.DestroyUi(player, "FerryInfo");
                         var elements = new CuiElementContainer();
-                        elements.Add(new CuiLabel { Text = { Text = msg, FontSize = 32, Align = TextAnchor.MiddleCenter, FadeIn = 3, Color = "0.1 0.4 0.1 0.7" }, RectTransform = { AnchorMin = "0.0 0.800", AnchorMax = "0.99 0.900" } }, "Overlay", "FerryInfo");
+                        elements.Add(new CuiLabel { Text = { Text = msg, FontSize = config._StatusSettings.FontSize, Align = TextAnchor.MiddleCenter, FadeIn = config._StatusSettings.FontFadeIn, Color = config._StatusSettings.FontColour }, RectTransform = { AnchorMin = config._StatusSettings.AnchorMin, AnchorMax = config._StatusSettings.AnchorMax } }, "Overlay", "FerryInfo");
                         CuiHelper.AddUi(player, elements);
                         //Destroys message after 5 secs
                         timer.Once(delay, () =>
@@ -734,7 +791,7 @@ namespace Oxide.Plugins
                 }
             }
         }
-        
+
         private void AddLock(BaseEntity ent, string data)
         {
             //Recreates codelocks
@@ -1001,16 +1058,17 @@ namespace Oxide.Plugins
 
         private string getmodifiers(BasePlayer player)
         {
+
             //Build database of players current modifiers
             string mods = "";
-            if (player != null) { foreach (Modifier m in player.modifiers.All) { mods += (m.Type.ToString()) + "," + (m.Source.ToString()) + "," + (m.Value.ToString()) + "," + (m.Duration.ToString()) + "," + (m.TimeRemaining.ToString()) + "<MF>"; } }
+            if (player != null && !config._PluginSettings.Modifiers) { foreach (Modifier m in player.modifiers.All) { mods += (m.Type.ToString()) + "," + (m.Source.ToString()) + "," + (m.Value.ToString()) + "," + (m.Duration.ToString()) + "," + (m.TimeRemaining.ToString()) + "<MF>"; } }
             return mods;
         }
 
         private void setmodifiers(BasePlayer player, string[] mods)
         {
             //Read from database players modifiers
-            if (player != null && mods != null && mods.Length != 0)
+            if (player != null && mods != null && mods.Length != 0 && !config._PluginSettings.Modifiers)
             {
                 List<ModifierDefintion> md = new List<ModifierDefintion>();
                 foreach (string mod in mods)
@@ -1055,6 +1113,7 @@ namespace Oxide.Plugins
 
         private string getblueprints(BasePlayer player)
         {
+            if (!config._PluginSettings.BluePrints) return "";
             //Build data base of players unloacked blueprints
             string bps = "";
             if (player != null) { foreach (var blueprint in player.PersistantPlayerInfo.unlockedItems) { bps += blueprint + "<BP>"; } }
@@ -1064,7 +1123,7 @@ namespace Oxide.Plugins
         private void setblueprints(BasePlayer player, string[] blueprints)
         {
             //Apply unlocked blueprints to player from database
-            if (player != null && blueprints != null && blueprints.Length != 0)
+            if (player != null && blueprints != null && blueprints.Length != 0 && !config._PluginSettings.BluePrints)
             {
                 foreach (string blueprint in blueprints)
                 {
@@ -1166,17 +1225,17 @@ namespace Oxide.Plugins
                         }
                         if (packets.Key.Contains("BasePlayerEconomicsData"))
                         {
-                            foreach (Dictionary<string, string> i in packets.Value){foreach (KeyValuePair<string, string> ii in i){SetEconomicsData(ii.Key, ii.Value);}}
+                            foreach (Dictionary<string, string> i in packets.Value) { foreach (KeyValuePair<string, string> ii in i) { SetEconomicsData(ii.Key, ii.Value); } }
                             continue;
                         }
                         if (packets.Key.Contains("BasePlayerServerRewardsData"))
                         {
-                            foreach (Dictionary<string, string> i in packets.Value){foreach (KeyValuePair<string, string> ii in i){SetServerRewardsData(ii.Key, ii.Value);}}
+                            foreach (Dictionary<string, string> i in packets.Value) { foreach (KeyValuePair<string, string> ii in i) { SetServerRewardsData(ii.Key, ii.Value); } }
                             continue;
                         }
                         if (packets.Key.Contains("BasePlayerZLevelsRemasteredData"))
                         {
-                            foreach (Dictionary<string, string> i in packets.Value){foreach (KeyValuePair<string, string> ii in i){SetZLevelsRemasteredData(ii.Key, ii.Value);}}
+                            foreach (Dictionary<string, string> i in packets.Value) { foreach (KeyValuePair<string, string> ii in i) { SetZLevelsRemasteredData(ii.Key, ii.Value); } }
                             continue;
                         }
                         if (packets.Key.Contains("BasePlayerInventory"))
@@ -1188,38 +1247,38 @@ namespace Oxide.Plugins
                         if (packets.Key.Contains("BasePlayer"))
                         {
                             var bp = ProcessBasePlayer(packets.Value, parent);
-                            if (bp != null){foreach (KeyValuePair<string, BaseNetworkable> m in bp){CreatedEntitys.Add(m.Key, m.Value);}}
+                            if (bp != null) { foreach (KeyValuePair<string, BaseNetworkable> m in bp) { CreatedEntitys.Add(m.Key, m.Value); } }
                             continue;
                         }
                     }
                     if (packets.Key.Contains("MiniCopter"))
                     {
                         var mc = ProcessHeli(packets.Value, parent);
-                        if (mc != null){foreach (KeyValuePair<string, BaseNetworkable> m in mc){CreatedEntitys.Add(m.Key, m.Value);}}
+                        if (mc != null) { foreach (KeyValuePair<string, BaseNetworkable> m in mc) { CreatedEntitys.Add(m.Key, m.Value); } }
                         continue;
                     }
                     if (packets.Key.Contains("BaseBoat"))
                     {
                         var bb = ProcessBoat(packets.Value, parent);
-                        if (bb != null){foreach (KeyValuePair<string, BaseNetworkable> m in bb){CreatedEntitys.Add(m.Key, m.Value);}}
+                        if (bb != null) { foreach (KeyValuePair<string, BaseNetworkable> m in bb) { CreatedEntitys.Add(m.Key, m.Value); } }
                         continue;
                     }
                     if (packets.Key.Contains("BaseCrane"))
                     {
                         var bc = ProcessCrane(packets.Value, parent);
-                        if (bc != null){foreach (KeyValuePair<string, BaseNetworkable> m in bc){CreatedEntitys.Add(m.Key, m.Value);}}
+                        if (bc != null) { foreach (KeyValuePair<string, BaseNetworkable> m in bc) { CreatedEntitys.Add(m.Key, m.Value); } }
                         continue;
                     }
                     if (packets.Key.Contains("SnowMobile"))
                     {
                         var bc = ProcessSnowmobile(packets.Value, parent);
-                        if (bc != null){foreach (KeyValuePair<string, BaseNetworkable> m in bc){CreatedEntitys.Add(m.Key, m.Value);}}
+                        if (bc != null) { foreach (KeyValuePair<string, BaseNetworkable> m in bc) { CreatedEntitys.Add(m.Key, m.Value); } }
                         continue;
                     }
                     if (packets.Key.Contains("BaseSubmarine"))
                     {
                         var bs = ProcessSub(packets.Value, parent);
-                        if (bs != null){foreach (KeyValuePair<string, BaseNetworkable> m in bs){CreatedEntitys.Add(m.Key, m.Value);}}
+                        if (bs != null) { foreach (KeyValuePair<string, BaseNetworkable> m in bs) { CreatedEntitys.Add(m.Key, m.Value); } }
                         continue;
                     }
                     if (packets.Key.Contains("BaseHorseInventory"))
@@ -1231,7 +1290,7 @@ namespace Oxide.Plugins
                     if (packets.Key.Contains("BaseHorse"))
                     {
                         var rh = ProcessHorse(packets.Value, parent);
-                        if (rh != null){foreach (KeyValuePair<string, BaseNetworkable> r in rh){CreatedEntitys.Add(r.Key, r.Value);}}
+                        if (rh != null) { foreach (KeyValuePair<string, BaseNetworkable> r in rh) { CreatedEntitys.Add(r.Key, r.Value); } }
                         continue;
                     }
                     if (packets.Key.Contains("ModularCarItems"))
@@ -1258,7 +1317,7 @@ namespace Oxide.Plugins
                     if (packets.Key.Contains("ModularCar"))
                     {
                         var sc = ProcessCar(packets.Value, parent);
-                        if (sc != null){foreach (KeyValuePair<string, ModularCar> c in sc){SpawnedCars.Add(c.Key, c.Value);}}
+                        if (sc != null) { foreach (KeyValuePair<string, ModularCar> c in sc) { SpawnedCars.Add(c.Key, c.Value); } }
                         continue;
                     }
                 }
@@ -1851,17 +1910,17 @@ namespace Oxide.Plugins
                     }
                     //Attach inventory and plugin data to packet
                     if (itemlist.Count != 0) { data.Add("BasePlayerInventory[" + baseplayer.UserIDString + "]", itemlist); }
-                    if (Backpacks != null) { data.Add("BasePlayerBackpackData[" + baseplayer.UserIDString + "]", GetBackpackData(baseplayer.UserIDString)); }
-                    if (Economics != null) { data.Add("BasePlayerEconomicsData[" + baseplayer.UserIDString + "]", GetEconomicsData(baseplayer.UserIDString)); }
-                    if (ZLevelsRemastered != null) { data.Add("BasePlayerZLevelsRemasteredData[" + baseplayer.UserIDString + "]", GetZLevelsRemasteredData(baseplayer.UserIDString)); }
-                    if (ServerRewards) { data.Add("BasePlayerServerRewardsData[" + baseplayer.UserIDString + "]", GetServerRewardsData(baseplayer.UserIDString)); }
+                    if (Backpacks != null && config._PluginSettings.BackPacks) { data.Add("BasePlayerBackpackData[" + baseplayer.UserIDString + "]", GetBackpackData(baseplayer.UserIDString)); }
+                    if (Economics != null && config._PluginSettings.Economics) { data.Add("BasePlayerEconomicsData[" + baseplayer.UserIDString + "]", GetEconomicsData(baseplayer.UserIDString)); }
+                    if (ZLevelsRemastered != null && config._PluginSettings.ZLevelsRemastered) { data.Add("BasePlayerZLevelsRemasteredData[" + baseplayer.UserIDString + "]", GetZLevelsRemasteredData(baseplayer.UserIDString)); }
+                    if (ServerRewards && config._PluginSettings.ServerRewards) { data.Add("BasePlayerServerRewardsData[" + baseplayer.UserIDString + "]", GetServerRewardsData(baseplayer.UserIDString)); }
                     //Show Open Nexus Screen
                     if (FerryPos is BasePlayer) { }//Is admin command so dont do transfere screen.
                     else
                     {
-                            plugin.AdjustConnectionScreen(baseplayer, "Open Nexus Transfering Data", 10);
-                            baseplayer.ClientRPCPlayer(null, baseplayer, "StartLoading");
-                            baseplayer.SetPlayerFlag(BasePlayer.PlayerFlags.ReceivingSnapshot, false);
+                        plugin.AdjustConnectionScreen(baseplayer, "Open Nexus Transfering Data", 10);
+                        baseplayer.ClientRPCPlayer(null, baseplayer, "StartLoading");
+                        baseplayer.SetPlayerFlag(BasePlayer.PlayerFlags.ReceivingSnapshot, false);
                     }
                     continue;
                 }
@@ -2015,7 +2074,7 @@ namespace Oxide.Plugins
         }
 
         //Sets players Economics balance
-        private void SetEconomicsData(string Owner, string Balance){if (Economics != null && Owner != null && Balance != null) { Economics?.Call<string>("SetBalance", Owner, double.Parse(Balance)); }}
+        private void SetEconomicsData(string Owner, string Balance) { if (Economics != null && Owner != null && Balance != null) { Economics?.Call<string>("SetBalance", Owner, double.Parse(Balance)); } }
 
         //Get Zlevel data
         private List<Dictionary<string, string>> GetZLevelsRemasteredData(string Owner)
@@ -2027,7 +2086,7 @@ namespace Oxide.Plugins
         }
 
         //Sets Zlevel data
-        private void SetZLevelsRemasteredData(string ownerid, string packet){if (ZLevelsRemastered != null) { ZLevelsRemastered.Call<bool>("api_SetPlayerInfo", ulong.Parse(ownerid), packet); }}
+        private void SetZLevelsRemasteredData(string ownerid, string packet) { if (ZLevelsRemastered != null) { ZLevelsRemastered.Call<bool>("api_SetPlayerInfo", ulong.Parse(ownerid), packet); } }
 
         private Dictionary<string, string> Contents(Item item, string Owner, string slot = "0", string container = "0")
         {
@@ -2035,7 +2094,7 @@ namespace Oxide.Plugins
             string code = "0";
             string mods = "";
             //Add keys code data
-            if (item.info.shortname != null && (item.info.shortname == "car.key" || item.info.shortname == "door.key")){code = (item.instanceData.dataInt.ToString());}
+            if (item.info.shortname != null && (item.info.shortname == "car.key" || item.info.shortname == "door.key")) { code = (item.instanceData.dataInt.ToString()); }
             //Create list of mods on weapon
             if (item.contents != null)
             {
@@ -2328,6 +2387,7 @@ namespace Oxide.Plugins
 
         private void AttachFamily(BaseEntity parent, string stringdata)
         {
+            if(!config._PluginSettings.Parented) { return; }
             //Rebuild all child entitys
             if (stringdata == null || stringdata == "") { return; }
             Dictionary<uint, uint> RemapNetID = new Dictionary<uint, uint>();
@@ -2536,7 +2596,8 @@ namespace Oxide.Plugins
 
         private string GetAllFamily(BaseEntity parent)
         {
-            List<BaseEntity> Family = new List<BaseEntity>();
+            if (!config._PluginSettings.Parented) { return ""; }
+                List<BaseEntity> Family = new List<BaseEntity>();
             string XML = GetBaseEntity(parent, true);
             foreach (BaseEntity be in parent.children)
             {
@@ -2798,7 +2859,7 @@ namespace Oxide.Plugins
                         {
                             Vector3 IL = foundislands.location + (Docked.position - foundislands.location) / 2;
                             IL.y = TerrainMeta.WaterMap.GetHeight(Docked.position) + 3f;
-                            if (GamePhysics.LineOfSight(Docked.position  + ((FerryPos.rotation * Vector3.forward) * 20) + new Vector3(0,10,0), IL, -1))
+                            if (GamePhysics.LineOfSight(Docked.position + ((FerryPos.rotation * Vector3.forward) * 20) + new Vector3(0, 10, 0), IL, -1))
                             {
                                 closest = IL;
                                 closest.y = 0;
@@ -2976,13 +3037,16 @@ namespace Oxide.Plugins
                         plugin.UpdateSync(plugin.thisserverip + ":" + plugin.thisserverport, ServerIP + ":" + ServerPort, "Transferring");
                         _isTransferring = true;
                         LoadingSync = false;
-                        plugin.MessageScreen("Waiting for other server", FerryPos.position, 30f);
+                        plugin.MessageScreen("Waiting for other server", FerryPos.position, 40f);
                         //Create a fail safe for if other ferry never arrives.
                         Invoke(() =>
                         {
-                            plugin.MessageScreen("Other servers ferry failed to reach transfere point in time.", FerryPos.position, 30f,config._FerrySettings.TransfereSyncTime - 5);
-                            _isTransferring = false;
-                            LoadingSync = true;
+                            if (_state == OpenNexusFerry.State.Departure)
+                            {
+                                plugin.MessageScreen("Other servers ferry failed to reach transfere point in time.", FerryPos.position, 40f, config._FerrySettings.TransfereSyncTime - 5);
+                                _isTransferring = false;
+                                LoadingSync = true;
+                            }
                         }, config._FerrySettings.TransfereSyncTime);
                         TransfereWait();
                     }
@@ -3016,7 +3080,7 @@ namespace Oxide.Plugins
                     plugin.EjectEntitys(GetFerryContents(), DockedEntitys, EjectionZone.position);
                     //Delay castoff after eject encase players want to get back on.
                     ServerSynced = false;
-                    plugin.MessageScreen("Ferry casting off in " + config._FerrySettings.EjectDelay + " seconds", FerryPos.position, 50f);
+                    plugin.MessageScreen("Ferry casting off in " + config._FerrySettings.EjectDelay + " seconds", FerryPos.position, 60f);
                     Invoke(() => { ServerSynced = true; }, config._FerrySettings.EjectDelay);
                     plugin.UpdateSync(plugin.thisserverip + ":" + plugin.thisserverport, ServerIP + ":" + ServerPort, "CastingOff");
                     return;
