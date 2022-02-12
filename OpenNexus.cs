@@ -37,6 +37,7 @@ namespace Oxide.Plugins
         private List<BaseNetworkable> unloadable = new List<BaseNetworkable>();
         private List<ulong> ProcessingPlayers = new List<ulong>();
         private List<ulong> MovePlayers = new List<ulong>();
+        private List<BasePlayer> JoinedViaNexus = new List<BasePlayer>();
         private List<ModuleData> CarModules = new List<ModuleData>();
         public static OpenNexus plugin;
         private Climate climate;
@@ -162,12 +163,12 @@ namespace Oxide.Plugins
                     },
                     _FerrySettings = new FerrySettings
                     {
-                        MoveSpeed = 10f,
+                        MoveSpeed = 12f,
                         TurnSpeed = 0.6f,
                         WaitTime = 60,
-                        EjectDelay = 30,
+                        EjectDelay = 60,
                         TransfereTime = 60,
-                        TransfereSyncTime = 120,
+                        TransfereSyncTime = 60,
                         ProgressDelay = 60,
                         RedirectDelay = 5,
                     },
@@ -579,6 +580,11 @@ namespace Oxide.Plugins
                 MountPlayer(player, SeatPlayers[player.userID]);
                 SeatPlayers.Remove(player.userID);
             }
+            if(JoinedViaNexus.Contains(player))
+            {
+                DirectMessage(player, "You have arrived at the next server");
+                JoinedViaNexus.Remove(player);
+            }
             //Remove transfere protection
             player.SetFlag(BaseEntity.Flags.Protected, false);
         }
@@ -778,18 +784,24 @@ namespace Oxide.Plugins
                 {
                     if (!player.IsSleeping())
                     {
-                        CuiHelper.DestroyUi(player, "FerryInfo");
-                        var elements = new CuiElementContainer();
-                        elements.Add(new CuiLabel { Text = { Text = msg, FontSize = config._StatusSettings.FontSize, Align = TextAnchor.MiddleCenter, FadeIn = config._StatusSettings.FontFadeIn, Color = config._StatusSettings.FontColour }, RectTransform = { AnchorMin = config._StatusSettings.AnchorMin, AnchorMax = config._StatusSettings.AnchorMax } }, "Overlay", "FerryInfo");
-                        CuiHelper.AddUi(player, elements);
-                        //Destroys message after 5 secs
-                        timer.Once(delay, () =>
-                        {
-                            CuiHelper.DestroyUi(player, "FerryInfo");
-                        });
+                        DirectMessage(player, msg, delay);
                     }
                 }
             }
+        }
+
+        private void DirectMessage(BasePlayer player,string msg, int delay = 8)
+        {
+            CuiHelper.DestroyUi(player, "FerryInfo");
+            var elements = new CuiElementContainer();
+            elements.Add(new CuiLabel { Text = { Text = msg, FontSize = config._StatusSettings.FontSize, Align = TextAnchor.MiddleCenter, FadeIn = config._StatusSettings.FontFadeIn, Color = config._StatusSettings.FontColour }, RectTransform = { AnchorMin = config._StatusSettings.AnchorMin, AnchorMax = config._StatusSettings.AnchorMax } }, "Overlay", "FerryInfo");
+            CuiHelper.AddUi(player, elements);
+            //Destroys message after delay
+            timer.Once(delay, () =>
+            {
+                CuiHelper.DestroyUi(player, "FerryInfo");
+            });
+
         }
 
         private void AddLock(BaseEntity ent, string data)
@@ -1322,7 +1334,7 @@ namespace Oxide.Plugins
                     }
                 }
                 //Max out retry counter to end retrying
-                if (parent is OpenNexusFerry) { (parent as OpenNexusFerry).retrys = 99; }
+                if (parent is OpenNexusFerry) { (parent as OpenNexusFerry).retrys = 999; }
             }
             //Return list of everything created.
             return CreatedEntitys;
@@ -1714,6 +1726,7 @@ namespace Oxide.Plugins
                 setmodifiers(player, settings.mods);
                 setteams(player, settings.team);
                 player.SendNetworkUpdateImmediate();
+                JoinedViaNexus.Add(player);
                 if (config._ServerSettings.ShowDebugMsg) Puts("ProcessBasePlayer Setting ready flag for player to transition");
                 plugin.UpdatePlayers(plugin.thisserverip + ":" + plugin.thisserverport, plugin.thisserverip + ":" + plugin.thisserverport, "Ready", settings.steamid.ToString());
                 return new Dictionary<string, BaseNetworkable>() { { settings.steamid, player } };
@@ -2952,9 +2965,13 @@ namespace Oxide.Plugins
                         if (entry["state"].ToString() == "Transferring")
                         {
                             if (config._ServerSettings.ShowDebugMsg) plugin.Puts("SyncTransfere Syned With Other Server @ " + ServerIP + ":" + ServerPort);
-                            LoadingSync = true;
+                                _state = GetNextState(_state);
+                            ServerSynced = true;
                             TransferOpenNexus();
+                            retrys = 0;
                             Invoke(() => DataChecker(), 1f);
+                            LoadingSync = true;
+                            return;
                         }
                     }
                 });
@@ -2986,7 +3003,6 @@ namespace Oxide.Plugins
                     retrys++;
                     return;
                 }
-                retrys = 0;
                 Progress();
             }
 
@@ -3035,20 +3051,22 @@ namespace Oxide.Plugins
                     if (!_isTransferring)
                     {
                         plugin.UpdateSync(plugin.thisserverip + ":" + plugin.thisserverport, ServerIP + ":" + ServerPort, "Transferring");
+                        _state = OpenNexusFerry.State.Transferring;
                         _isTransferring = true;
                         LoadingSync = false;
                         plugin.MessageScreen("Waiting for other server", FerryPos.position, 40f);
+                        TransfereWait();
                         //Create a fail safe for if other ferry never arrives.
                         Invoke(() =>
                         {
-                            if (_state == OpenNexusFerry.State.Departure)
+                            if (_state == OpenNexusFerry.State.Transferring && _isTransferring && !LoadingSync)
                             {
                                 plugin.MessageScreen("Other servers ferry failed to reach transfere point in time.", FerryPos.position, 40f, config._FerrySettings.TransfereSyncTime - 5);
                                 _isTransferring = false;
                                 LoadingSync = true;
+                                _state = OpenNexusFerry.State.Arrival;
                             }
                         }, config._FerrySettings.TransfereSyncTime);
-                        TransfereWait();
                     }
                     return;
                 }
@@ -3056,6 +3074,7 @@ namespace Oxide.Plugins
                 {
                     //Force a resync of ferry with its target part.
                     ServerSynced = false;
+                    LoadingSync = false;
                     plugin.UpdateSync(plugin.thisserverip + ":" + plugin.thisserverport, ServerIP + ":" + ServerPort, "Sync");
                     SyncFerrys();
                     return;
@@ -3214,7 +3233,6 @@ namespace Oxide.Plugins
             private void TransferOpenNexus()
             {
                 List<BaseNetworkable> list = new List<BaseNetworkable>();
-                _state = OpenNexusFerry.State.Transferring;
                 //Get all entitys on the  ferry to transfere
                 list = GetFerryContents(true);
                 //Check if anything to transfere
