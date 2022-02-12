@@ -120,6 +120,14 @@ namespace Oxide.Plugins
                 public string AnchorMin;
                 [JsonProperty("AnchorMax")]
                 public string AnchorMax;
+                [JsonProperty("FailedMSG")]
+                public string FailedMSG;
+                [JsonProperty("WaitingMSG")]
+                public string WaitingMSG;
+                [JsonProperty("CastoffMSG")]
+                public string CastoffMSG;
+                [JsonProperty("ArriveMSG")]
+                public string ArriveMSG;
             }
             [JsonProperty("Plugin Settings:")]
             public PluginSettings _PluginSettings = new PluginSettings();
@@ -179,7 +187,11 @@ namespace Oxide.Plugins
                         FontColour = "0.1 0.4 0.1 0.7",
                         FontFadeIn = 3,
                         AnchorMin = "0.100 0.800",
-                        AnchorMax = "0.900 0.900"
+                        AnchorMax = "0.900 0.900",
+                        FailedMSG = "Other Servers Failed To Reach Transfere Point In Time",
+                        WaitingMSG = "Waiting For Other Server",
+                        CastoffMSG = "Ferry Casting Off In <$T> Seconds",
+                        ArriveMSG = "You Have Arrived At The Next Server"
                     },
                     _PluginSettings = new PluginSettings
                     {
@@ -201,8 +213,7 @@ namespace Oxide.Plugins
             try
             {
                 config = Config.ReadObject<Configuration>();
-                if (config == null)
-                    LoadDefaultConfig();
+                if (config == null) { LoadDefaultConfig(); }
             }
             catch
             {
@@ -252,11 +263,8 @@ namespace Oxide.Plugins
             timer.Once(config._ServerSettings.ServerDelay, () =>
             {
                 CreatesTables();
-                timer.Once(config._ServerSettings.ServerDelay, () =>
-                {
-                    //Reset players data
-                    foreach (BasePlayer bp in BasePlayer.activePlayerList) { if (bp.IsConnected && !bp.IsNpc) { NextTick(() => { UpdatePlayers(thisserverip + ":" + thisserverport, thisserverip + ":" + thisserverport, "Playing", bp.UserIDString); }); } }
-                });
+                //Reset players data
+                timer.Once(config._ServerSettings.ServerDelay, () =>{foreach (BasePlayer bp in BasePlayer.activePlayerList) { if (bp.IsConnected && !bp.IsNpc) { NextTick(() => { UpdatePlayers(thisserverip + ":" + thisserverport, thisserverip + ":" + thisserverport, "Playing", bp.UserIDString); }); } }});
             });
         }
 
@@ -522,23 +530,17 @@ namespace Oxide.Plugins
 
         private void OnServerInitialized(bool initial)
         {
-
             plugin = this;
             //Connect to database
             ConnectToMysql(config._ServerSettings.MySQLHost, config._ServerSettings.MySQLPort, config._ServerSettings.MySQLDB, config._ServerSettings.MySQLUsername, config._ServerSettings.MySQLPassword);
             //Get Weather data
             climate = SingletonComponent<Climate>.Instance;
             //Get world size for teleport zoning
-            if (config._ServerSettings.EdgeTeleporter)
-            {
-                RanMapSize = (uint)(World.Size / 1.02);
-                if (RanMapSize >= 4000) { RanMapSize = 3900; }
-            }
+            if (config._ServerSettings.EdgeTeleporter){RanMapSize = (uint)(World.Size / 1.02);if (RanMapSize >= 4000) { RanMapSize = 3900; }}
             //Sync weather repeat timer
             if (config._ServerSettings.SyncTimeWeather) { timer.Every(config._ServerSettings.SyncTimeWeaterEvery, () => setclimate()); }
             //Determing if need wait for first startup
-            if (initial) { Fstartup(); }
-            else { Startup(); }
+            if (initial) { Fstartup(); }else { Startup(); }
         }
 
         private void OnEntitySpawned(BaseEntity baseEntity)
@@ -564,7 +566,6 @@ namespace Oxide.Plugins
         private void OnPlayerSetInfo(Network.Connection connection, string name, string value)
         {
             //Limits player to 1 server at a time.
-            //Use a list to temp stop this hook firing too often on same player
             if (ProcessingPlayers.Contains(connection.ownerid)) return;
             ProcessingPlayers.Add(connection.ownerid);
             timer.Once(10f, () => ProcessingPlayers.Remove(connection.ownerid));
@@ -582,7 +583,7 @@ namespace Oxide.Plugins
             }
             if(JoinedViaNexus.Contains(player))
             {
-                DirectMessage(player, "You have arrived at the next server");
+                DirectMessage(player, config._StatusSettings.ArriveMSG);
                 JoinedViaNexus.Remove(player);
             }
             //Remove transfere protection
@@ -632,14 +633,10 @@ namespace Oxide.Plugins
                 }
             }
             //Remove CUI messaghes
-            foreach (BasePlayer player in BasePlayer.activePlayerList)
-            {
-                CuiHelper.DestroyUi(player, "FerryInfo");
-            }
+            foreach (BasePlayer player in BasePlayer.activePlayerList){CuiHelper.DestroyUi(player, "FerryInfo");}
             config = null;
             plugin = null;
         }
-
         #endregion
 
         #region Startup
@@ -648,12 +645,8 @@ namespace Oxide.Plugins
             //Waits for fully loaded before running
             timer.Once(10f, () =>
             {
-                try
-                {
-                    //Still starting so run a timer again in 10 sec to check.
-                    if (Rust.Application.isLoading) { Fstartup(); return; }
-                }
-                catch { }
+                //Still starting so run a timer again in 10 sec to check.
+                try{if (Rust.Application.isLoading) { Fstartup(); return; }}catch { }
                 //Starup script now.
                 Startup();
             });
@@ -668,14 +661,8 @@ namespace Oxide.Plugins
                 foreach (string finalsetting in tempsetting)
                 {
                     string settingparsed = finalsetting.ToLower().Replace(":", "");
-                    if (settingparsed.Contains("server="))
-                    {
-                        OpenFerry.ServerIP = settingparsed.Replace("server=", "");
-                    }
-                    else if (settingparsed.Contains("port="))
-                    {
-                        OpenFerry.ServerPort = settingparsed.Replace("port=", "");
-                    }
+                    if (settingparsed.Contains("server=")){OpenFerry.ServerIP = settingparsed.Replace("server=", "");}
+                    else if (settingparsed.Contains("port=")){OpenFerry.ServerPort = settingparsed.Replace("port=", "");}
                 }
             }
         }
@@ -745,7 +732,6 @@ namespace Oxide.Plugins
                     FoundIslands.Add(id);
                     Puts("Found Island @ " + position.ToString());
                     unloadable.Add(openNexusIsland);
-
                 }
             }
             //Remove dead Ferry turrets at junk collection (happens on reboots might shoot though low ground maps)
@@ -778,16 +764,7 @@ namespace Oxide.Plugins
             //Scans area for players
             Vis.Entities<BasePlayer>(pos, radius, PlayersInRange);
             //Shows CUI to each player in range
-            if (PlayersInRange.Count != 0)
-            {
-                foreach (BasePlayer player in PlayersInRange.ToArray())
-                {
-                    if (!player.IsSleeping())
-                    {
-                        DirectMessage(player, msg, delay);
-                    }
-                }
-            }
+            if (PlayersInRange.Count != 0){foreach (BasePlayer player in PlayersInRange.ToArray()){if (!player.IsSleeping()){DirectMessage(player, msg, delay);}}}
         }
 
         private void DirectMessage(BasePlayer player,string msg, int delay = 8)
@@ -797,11 +774,7 @@ namespace Oxide.Plugins
             elements.Add(new CuiLabel { Text = { Text = msg, FontSize = config._StatusSettings.FontSize, Align = TextAnchor.MiddleCenter, FadeIn = config._StatusSettings.FontFadeIn, Color = config._StatusSettings.FontColour }, RectTransform = { AnchorMin = config._StatusSettings.AnchorMin, AnchorMax = config._StatusSettings.AnchorMax } }, "Overlay", "FerryInfo");
             CuiHelper.AddUi(player, elements);
             //Destroys message after delay
-            timer.Once(delay, () =>
-            {
-                CuiHelper.DestroyUi(player, "FerryInfo");
-            });
-
+            timer.Once(delay, () =>{CuiHelper.DestroyUi(player, "FerryInfo");});
         }
 
         private void AddLock(BaseEntity ent, string data)
@@ -865,7 +838,6 @@ namespace Oxide.Plugins
             for (int i = 0; i < 100; i++)
             {
                 position2 = new Vector3(Core.Random.Range(spawnpos.x - 10f, spawnpos.x + 10f), spawnpos.y + 2.5f, Core.Random.Range(spawnpos.z - 10f, spawnpos.z + 10f));
-
                 if (!TransformUtil.GetGroundInfo(position2, out position2, out position3, 10, 413204481, null))
                 {
                     position = spawnpos + new Vector3(0, 5, 0);
@@ -910,10 +882,7 @@ namespace Oxide.Plugins
                                     player.SetPlayerFlag(BasePlayer.PlayerFlags.ReceivingSnapshot, true);
                                 }
                                 player.Teleport(serverPosition);
-                                if (player.IsConnected)
-                                {
-                                    player.SendEntityUpdate();
-                                }
+                                if (player.IsConnected){player.SendEntityUpdate();}
                                 player.UpdateNetworkGroup();
                                 player.SendNetworkUpdateImmediate(false);
                             }
@@ -927,7 +896,6 @@ namespace Oxide.Plugins
                         {
                             entity.SetParent(null, false, false);
                             entity.ServerPosition = serverPosition;
-                            entity.ClientRPC(null, "Stand");
                             entity.SendNetworkUpdateImmediate(false);
                         }
                         continue;
@@ -1000,10 +968,7 @@ namespace Oxide.Plugins
                     if (playerTeam.members.Contains(player.userID))
                     {
                         teams += playerTeam.teamLeader.ToString() + ",";
-                        foreach (ulong p in playerTeam.members)
-                        {
-                            try { teams += p.ToString() + "<DN>" + BasePlayer.FindAwakeOrSleeping(p.ToString()).displayName + ","; } catch { }
-                        }
+                        foreach (ulong p in playerTeam.members){try { teams += p.ToString() + "<DN>" + BasePlayer.FindAwakeOrSleeping(p.ToString()).displayName + ","; } catch { }}
                     }
                 }
             }
@@ -1142,13 +1107,7 @@ namespace Oxide.Plugins
                     if (blueprint == null || blueprint == "") { continue; }
                     int bp;
                     bool success = int.TryParse(blueprint, out bp);
-                    if (success)
-                    {
-                        if (!player.PersistantPlayerInfo.unlockedItems.Contains(bp))
-                        {
-                            player.PersistantPlayerInfo.unlockedItems.Add(bp);
-                        }
-                    }
+                    if (success){if (!player.PersistantPlayerInfo.unlockedItems.Contains(bp)){player.PersistantPlayerInfo.unlockedItems.Add(bp);}}
                 }
                 player.SendNetworkUpdateImmediate();
                 player.ClientRPCPlayer(null, player, "UnlockedBlueprint", 0);
@@ -1685,10 +1644,7 @@ namespace Oxide.Plugins
                     //Drop all items on that player where they were asleep since shouldnt be a body when transfereing from ferry
                     if (player.inventory.AllItems().Length != 0)
                     {
-                        foreach (Item item in player.inventory.AllItems())
-                        {
-                            item.DropAndTossUpwards(player.transform.position);
-                        }
+                        foreach (Item item in player.inventory.AllItems()){item.DropAndTossUpwards(player.transform.position);}
                     }
                     if (player.IsConnected)
                     {
@@ -1832,11 +1788,7 @@ namespace Oxide.Plugins
                         float _float;
                         if (int.TryParse(modsetting[0], out _int) && float.TryParse(modsetting[1], out _float) && int.TryParse(modsetting[2], out _int2))
                         {
-                            try
-                            {
-                                item.contents.AddItem(CreateItem(_int, _int2, 0, _float, code, 0).info, _int2);
-                            }
-                            catch { }
+                            try{item.contents.AddItem(CreateItem(_int, _int2, 0, _float, code, 0).info, _int2);}catch { }
                         }
                     }
                 }
@@ -2111,10 +2063,7 @@ namespace Oxide.Plugins
             //Create list of mods on weapon
             if (item.contents != null)
             {
-                foreach (var mod in item.contents.itemList)
-                {
-                    if (mod.info.itemid != 0) { mods += (mod.info.itemid.ToString() + "=" + mod.condition.ToString() + "=" + mod.amount.ToString() + "_"); }
-                }
+                foreach (var mod in item.contents.itemList){if (mod.info.itemid != 0) { mods += (mod.info.itemid.ToString() + "=" + mod.condition.ToString() + "=" + mod.amount.ToString() + "_"); }}
             }
             var itemdata = new Dictionary<string, string>
                         {
@@ -2161,7 +2110,6 @@ namespace Oxide.Plugins
                 //Create packet of engine parts
                 if (vehicleModuleEngine != null)
                 {
-
                     data.Add("ModularCarItems[" + vehicleModuleEngine.net.ID + "]", ModularItems(vehicleModuleEngine.GetContainer().inventory, thiscarID, socket.ToString()));
                     socket += moduleEntity.GetNumSocketsTaken();
                     continue;
@@ -2267,10 +2215,7 @@ namespace Oxide.Plugins
             else
             {
                 //Get all seat points
-                if (bv.mountPoints != null && bv.mountPoints.Count > 0)
-                {
-                    foreach (BaseVehicle.MountPointInfo m in bv.mountPoints) { Mounts += "<mount>" + m.pos.ToString() + "&" + m.rot.ToString() + "&" + m.mountable.transform.localRotation.ToString(); }
-                }
+                if (bv.mountPoints != null && bv.mountPoints.Count > 0){foreach (BaseVehicle.MountPointInfo m in bv.mountPoints) { Mounts += "<mount>" + m.pos.ToString() + "&" + m.rot.ToString() + "&" + m.mountable.transform.localRotation.ToString(); }}
                 Childred = GetAllFamily(bv) + Mounts;
             }
             var itemdata = new Dictionary<string, string>
@@ -3054,14 +2999,14 @@ namespace Oxide.Plugins
                         _state = OpenNexusFerry.State.Transferring;
                         _isTransferring = true;
                         LoadingSync = false;
-                        plugin.MessageScreen("Waiting for other server", FerryPos.position, 40f);
+                        plugin.MessageScreen(config._StatusSettings.WaitingMSG, FerryPos.position, 40f);
                         TransfereWait();
                         //Create a fail safe for if other ferry never arrives.
                         Invoke(() =>
                         {
                             if (_state == OpenNexusFerry.State.Transferring && _isTransferring && !LoadingSync)
                             {
-                                plugin.MessageScreen("Other servers ferry failed to reach transfere point in time.", FerryPos.position, 40f, config._FerrySettings.TransfereSyncTime - 5);
+                                plugin.MessageScreen(config._StatusSettings.FailedMSG, FerryPos.position, 40f, config._FerrySettings.TransfereSyncTime - 5);
                                 _isTransferring = false;
                                 LoadingSync = true;
                                 _state = OpenNexusFerry.State.Arrival;
@@ -3099,7 +3044,8 @@ namespace Oxide.Plugins
                     plugin.EjectEntitys(GetFerryContents(), DockedEntitys, EjectionZone.position);
                     //Delay castoff after eject encase players want to get back on.
                     ServerSynced = false;
-                    plugin.MessageScreen("Ferry casting off in " + config._FerrySettings.EjectDelay + " seconds", FerryPos.position, 60f);
+                    string CMSG = config._StatusSettings.CastoffMSG.Replace("<$T>", config._FerrySettings.EjectDelay.ToString());
+                    plugin.MessageScreen(CMSG, FerryPos.position, 60f);
                     Invoke(() => { ServerSynced = true; }, config._FerrySettings.EjectDelay);
                     plugin.UpdateSync(plugin.thisserverip + ":" + plugin.thisserverport, ServerIP + ":" + ServerPort, "CastingOff");
                     return;
