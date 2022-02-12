@@ -335,7 +335,7 @@ namespace Oxide.Plugins
             else
             {
                 //Read last transfered packet waiting for us
-                sqlQuery = "SELECT `id`, `spawned`,`data` FROM packets WHERE `target`= @0 AND `sender` = @1 ORDER BY id DESC;";
+                sqlQuery = "SELECT `id`, `spawned`,`data` FROM packets WHERE `target`= @0 AND `sender` = @1 ORDER BY id DESC LIMIT 10;";
                 selectCommand = Oxide.Core.Database.Sql.Builder.Append(sqlQuery, Target, OpenFerry.ServerIP + ":" + OpenFerry.ServerPort);
             }
             sqlLibrary.Query(selectCommand, sqlConnection, list =>
@@ -344,7 +344,7 @@ namespace Oxide.Plugins
                 foreach (Dictionary<string, object> entry in list)
                 {
                     //Packet has already been spawned on server before so dont re-transfere
-                    if (entry["spawned"].ToString() != "0") { if (findid == 0) { continue; } }
+                    if (entry["spawned"].ToString() == "1" && findid == 0) { continue; } 
                     //Process Packet
                     int id;
                     bool success = int.TryParse(entry["id"].ToString(), out id);
@@ -371,7 +371,7 @@ namespace Oxide.Plugins
                     if (config._ServerSettings.ShowDebugMsg) plugin.Puts("Read " + String.Format("{0:0.##}", (double)(entry["data"].ToString().Length / 1024f)) + " Kb");
                     return;
                 }
-                return;
+                    return;
             });
         }
 
@@ -2965,7 +2965,7 @@ namespace Oxide.Plugins
                         if (entry["state"].ToString() == "Transferring")
                         {
                             if (config._ServerSettings.ShowDebugMsg) plugin.Puts("SyncTransfere Syned With Other Server @ " + ServerIP + ":" + ServerPort);
-                                _state = GetNextState(_state);
+                            _state = GetNextState(_state);
                             ServerSynced = true;
                             TransferOpenNexus();
                             retrys = 0;
