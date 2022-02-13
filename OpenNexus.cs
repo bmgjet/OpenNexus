@@ -305,11 +305,7 @@ namespace Oxide.Plugins
         [ChatCommand("OpenNexus.debug")]
         private void cmddebug(BasePlayer player, string command, string[] args)
         {
-            if (!HasPermission(player, permadmin))
-            {
-                player.ChatMessage("You dont have OpenNexus.admin Perm!");
-                return;
-            }
+            if (!HasPermission(player, permadmin)){player.ChatMessage("You dont have OpenNexus.admin Perm!");return;}
             if (config._ServerSettings.ShowDebugMsg)
             {
                 config._ServerSettings.ShowDebugMsg = false;
@@ -319,6 +315,24 @@ namespace Oxide.Plugins
             {
                 config._ServerSettings.ShowDebugMsg = true;
                 player.ChatMessage("Debug messages enabled.");
+            }
+            NextTick(SaveConfig);
+        }
+
+        [ConsoleCommand("OpenNexus.compression")]
+        private void cmdComp(ConsoleSystem.Arg arg)
+        {
+            //Resets database tables
+            if (!arg.IsAdmin) { return; }
+            if (config._ServerSettings.ShowDebugMsg)
+            {
+                config._ServerSettings.UseCompression = false;
+                Puts("Compression Disabled.");
+            }
+            else
+            {
+                config._ServerSettings.UseCompression = true;
+                Puts("Compression Enabled.");
             }
             NextTick(SaveConfig);
         }
@@ -514,7 +528,7 @@ namespace Oxide.Plugins
         private void CreatesTables()
         {
             //Setup tables if they dont exsist
-            sqlLibrary.Insert(Core.Database.Sql.Builder.Append("CREATE TABLE IF NOT EXISTS `packets` (`id` int(11) unsigned NOT NULL AUTO_INCREMENT, `spawned` int(1) NOT NULL,`timestamp` varchar(64) NOT NULL,`target` varchar(21),`sender` varchar(21),`data` text, PRIMARY KEY (`id`)) DEFAULT CHARSET=utf8;"), sqlConnection);
+            sqlLibrary.Insert(Core.Database.Sql.Builder.Append("CREATE TABLE IF NOT EXISTS `packets` (`id` int(11) unsigned NOT NULL AUTO_INCREMENT, `spawned` int(1) NOT NULL,`timestamp` varchar(64) NOT NULL,`target` varchar(21),`sender` varchar(21),`data` mediumtext, PRIMARY KEY (`id`)) DEFAULT CHARSET=utf8;"), sqlConnection);
             sqlLibrary.Insert(Core.Database.Sql.Builder.Append("CREATE TABLE IF NOT EXISTS `sync` (`id` int(11) unsigned NOT NULL AUTO_INCREMENT,`sender` varchar(21),`target` varchar(21),`state` varchar(21),`climate` text, PRIMARY KEY (`id`)) DEFAULT CHARSET=utf8;"), sqlConnection);
             sqlLibrary.Insert(Core.Database.Sql.Builder.Append("CREATE TABLE IF NOT EXISTS `players` (`id` int(11) unsigned NOT NULL AUTO_INCREMENT,`sender` varchar(21),`target` varchar(21),`state` varchar(21),`steamid` varchar(21), PRIMARY KEY (`id`)) DEFAULT CHARSET=utf8;"), sqlConnection);
         }
@@ -588,6 +602,13 @@ namespace Oxide.Plugins
             }
             //Remove transfere protection
             player.SetFlag(BaseEntity.Flags.Protected, false);
+        }
+
+        private object CanHelicopterTarget(PatrolHelicopterAI heli, BasePlayer player)
+        {
+            BaseEntity Ferry = player.GetParentEntity();
+            if (Ferry != null && Ferry is NexusFerry){return true;}
+            return null;
         }
 
         private void Unload()
@@ -1038,14 +1059,14 @@ namespace Oxide.Plugins
 
             //Build database of players current modifiers
             string mods = "";
-            if (player != null && !config._PluginSettings.Modifiers) { foreach (Modifier m in player.modifiers.All) { mods += (m.Type.ToString()) + "," + (m.Source.ToString()) + "," + (m.Value.ToString()) + "," + (m.Duration.ToString()) + "," + (m.TimeRemaining.ToString()) + "<MF>"; } }
+            if (player != null && config._PluginSettings.Modifiers == true) { foreach (Modifier m in player.modifiers.All) { mods += (m.Type.ToString()) + "," + (m.Source.ToString()) + "," + (m.Value.ToString()) + "," + (m.Duration.ToString()) + "," + (m.TimeRemaining.ToString()) + "<MF>"; } }
             return mods;
         }
 
         private void setmodifiers(BasePlayer player, string[] mods)
         {
             //Read from database players modifiers
-            if (player != null && mods != null && mods.Length != 0 && !config._PluginSettings.Modifiers)
+            if (player != null && mods != null && mods.Length != 0 && config._PluginSettings.Modifiers == true)
             {
                 List<ModifierDefintion> md = new List<ModifierDefintion>();
                 foreach (string mod in mods)
@@ -1090,7 +1111,7 @@ namespace Oxide.Plugins
 
         private string getblueprints(BasePlayer player)
         {
-            if (!config._PluginSettings.BluePrints) return "";
+            if (config._PluginSettings.BluePrints == false) return "";
             //Build data base of players unloacked blueprints
             string bps = "";
             if (player != null) { foreach (var blueprint in player.PersistantPlayerInfo.unlockedItems) { bps += blueprint + "<BP>"; } }
@@ -1100,7 +1121,7 @@ namespace Oxide.Plugins
         private void setblueprints(BasePlayer player, string[] blueprints)
         {
             //Apply unlocked blueprints to player from database
-            if (player != null && blueprints != null && blueprints.Length != 0 && !config._PluginSettings.BluePrints)
+            if (player != null && blueprints != null && blueprints.Length != 0 && config._PluginSettings.BluePrints == true)
             {
                 foreach (string blueprint in blueprints)
                 {
@@ -1152,7 +1173,7 @@ namespace Oxide.Plugins
         {
             //trys to move into container position other wise force inserts into position
             if (settings == null || Inventory == null) return;
-            Item item = CreateItem(settings.id, settings.amount, settings.skinid, settings.condition, settings.code);
+            Item item = CreateItem(settings.id, settings.amount, settings.skinid, settings.condition, settings.code, settings.imgdata, settings.oggdata, settings.text);
             if (item != null)
             {
                 if (!item.MoveToContainer(Inventory, settings.slot, true, true))
@@ -1447,6 +1468,13 @@ namespace Oxide.Plugins
                             }
                         }
                     }
+                    //Relock car if it had a lock
+                    if(settings.lockid != 0)
+                    {
+                        Puts("Locking car " + settings.lockid.ToString());
+                        car.carLock.LockID = settings.lockid;
+                        car.carLock.owner.SendNetworkUpdate();
+                    }
                 }
             });
             ApplySettings(car, parent, settings.health, settings.maxhealth, settings.fuel, settings.ownerid, settings.pos, settings.rot);
@@ -1690,7 +1718,7 @@ namespace Oxide.Plugins
             return null;
         }
 
-        private void GiveContents(string ownerid, int id, float condition, int amount, ulong skinid, int code, int slot, int container, string mods, Dictionary<string, BaseNetworkable> CreatedEntitys)
+        private void GiveContents(string ownerid, int id, float condition, int amount, ulong skinid, int code, string imgdata, string oggdata, string text, int slot, int container, string mods, Dictionary<string, BaseNetworkable> CreatedEntitys)
         {
             if (CreatedEntitys.ContainsKey(ownerid))
             {
@@ -1702,7 +1730,7 @@ namespace Oxide.Plugins
                     List<string> Wmods = new List<string>();
                     if (mods != "")
                     {
-                        string[] wmod = mods.Split('_');
+                        string[] wmod = mods.Split(new string[] { "<ML>" }, System.StringSplitOptions.RemoveEmptyEntries);
                         foreach (string w in wmod) { Wmods.Add(w); }
                     }
 
@@ -1711,7 +1739,7 @@ namespace Oxide.Plugins
                     if (rh != null)
                     {
                         //put into horse inventory
-                        Item item = BuildItem(id, amount, skinid, condition, code, Wmods);
+                        Item item = BuildItem(id, amount, skinid, condition, code, imgdata, oggdata, text, Wmods);
                         if (item == null) return;
                         item.position = slot;
                         rh.inventory.Insert(item);
@@ -1726,7 +1754,7 @@ namespace Oxide.Plugins
                         {
                             //Put back in players inventory
                             case 0:
-                                item = BuildItem(id, amount, skinid, condition, code, Wmods);
+                                item = BuildItem(id, amount, skinid, condition, code, imgdata, oggdata, text, Wmods);
                                 if (item != null)
                                 {
                                     if (!item.MoveToContainer(bp.inventory.containerWear, slot, true, true))
@@ -1737,7 +1765,7 @@ namespace Oxide.Plugins
                                 }
                                 break;
                             case 1:
-                                item = BuildItem(id, amount, skinid, condition, code, Wmods);
+                                item = BuildItem(id, amount, skinid, condition, code, imgdata, oggdata, text, Wmods);
                                 if (item != null)
                                 {
                                     if (!item.MoveToContainer(bp.inventory.containerBelt, slot, true, true))
@@ -1748,7 +1776,7 @@ namespace Oxide.Plugins
                                 }
                                 break;
                             case 2:
-                                item = BuildItem(id, amount, skinid, condition, code, Wmods);
+                                item = BuildItem(id, amount, skinid, condition, code, imgdata, oggdata, text, Wmods);
                                 if (item != null)
                                 {
                                     if (!item.MoveToContainer(bp.inventory.containerMain, slot, true, true))
@@ -1765,9 +1793,9 @@ namespace Oxide.Plugins
             }
         }
 
-        private Item BuildItem(int id, int amount, ulong skin, float condition, int code, List<string> mods)
+        private Item BuildItem(int id, int amount, ulong skin, float condition, int code, string imgdata, string oggdata, string text, List<string> mods)
         {
-            Item item = CreateItem(id, amount, skin, condition, code);
+            Item item = CreateItem(id, amount, skin, condition, code, imgdata, oggdata, text);
             if (item == null) { return null; }
             //Setup guns so they work when given to player
             BaseProjectile weapon = item.GetHeldEntity() as BaseProjectile;
@@ -1775,20 +1803,22 @@ namespace Oxide.Plugins
             //Set up mods on gun
             if (mods != null && mods.Count > 0)
             {
-                foreach (var mod in mods)
+                foreach (string mod in mods)
                 {
-                    if (mod.Contains("="))
+                    if (mod.Contains("<M>"))
                     {
                         //Apply mods if its a gun
-                        string[] modsetting = mod.Split('=');
-                        if (modsetting.Length != 3) continue;
-                        if (modsetting[0] == null || modsetting[1] == null || modsetting[0] == null) { continue; }
+                        string[] modsetting = mod.Split(new string[] { "<M>" }, System.StringSplitOptions.RemoveEmptyEntries);
+                        string ttext = "";
+                        if (modsetting.Length == 4){ttext = modsetting[3];}
+                        if (modsetting.Length < 3) { continue; }
                         int _int;
                         int _int2;
                         float _float;
                         if (int.TryParse(modsetting[0], out _int) && float.TryParse(modsetting[1], out _float) && int.TryParse(modsetting[2], out _int2))
                         {
-                            try{item.contents.AddItem(CreateItem(_int, _int2, 0, _float, code, 0).info, _int2);}catch { }
+                            Item moditem = CreateItem(_int, _int2, 0, _float, code, imgdata, oggdata, ttext, 0);
+                            if (moditem != null){if (!moditem.MoveToContainer(item.contents)) { item.contents.Insert(moditem); }}
                         }
                     }
                 }
@@ -1796,31 +1826,64 @@ namespace Oxide.Plugins
             return item;
         }
 
-        private Item CreateItem(int id, int amount, ulong skinid, float condition, int code, int blueprintTarget = 0)
+        private Item CreateItem(int id, int amount, ulong skinid, float condition, int code, string imgdata, string oggdata, string text, int blueprintTarget = 0)
         {
             //Create a item
             Item item = ItemManager.Create(ItemManager.FindItemDefinition(id), amount, skinid);
             if (blueprintTarget != 0) { item.blueprintTarget = blueprintTarget; }
+            //Reapply ImageData to photos and oggdata to cassettes
+            if (item.instanceData != null)
+            {
+                item.instanceData.dataInt = code;
+                BaseNetworkable baseNetworkable = BaseNetworkable.serverEntities.Find(item.instanceData.subEntity);
+                if (baseNetworkable != null)
+                {
+                    PhotoEntity photoEntity;
+                    if ((photoEntity = (baseNetworkable as PhotoEntity)) != null)
+                    {
+                        if (imgdata.Contains("<IDATA>"))
+                        {
+                            string[] ImageStrings = imgdata.Split(new string[] { "<IDATA>" }, System.StringSplitOptions.RemoveEmptyEntries);
+                            if (ImageStrings.Length == 2)
+                            {
+                                ulong _ulong;
+                                if (ulong.TryParse(ImageStrings[0], out _ulong)) { photoEntity.SetImageData(_ulong, Convert.FromBase64String(ImageStrings[1])); }
+                            }
+                        }
+                    }
+                    Cassette cassetteEntity;
+                    if ((cassetteEntity = (baseNetworkable as Cassette)) != null)
+                    {
+                        if (oggdata.Contains("<SDATA>"))
+                        {
+                            string[] SoundStrings = oggdata.Split(new string[] { "<SDATA>" }, System.StringSplitOptions.RemoveEmptyEntries);
+                            if (SoundStrings.Length == 2)
+                            {
+                                ulong _ulong;
+                                if (ulong.TryParse(SoundStrings[0], out _ulong))
+                                {
+                                    cassetteEntity.ClearSavedAudio();
+                                    cassetteEntity.CreatorSteamId = _ulong;
+                                    cassetteEntity.SetAudioId(FileStorage.server.Store(Convert.FromBase64String(SoundStrings[1]), global::FileStorage.Type.ogg, cassetteEntity.net.ID, 0U), _ulong);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            //Add keycode back to keys
+            if (item.info.shortname.Contains(".key"))
+            {
+                ProtoBuf.Item.InstanceData instanceData = Facepunch.Pool.Get<ProtoBuf.Item.InstanceData>();
+                instanceData.dataInt = code;
+                item.instanceData = instanceData;
+            }
             item.condition = condition;
-            //Extra checks
-            ExtraChecks(item, code);
+            if (text != "") { item.text = text; }       
             item.MarkDirty();
             return item;
         }
-
-        private Item ExtraChecks(Item item, int code)
-        {
-            //Reapply the code to keys
-            if (item.info.shortname == "car.key" || item.info.shortname == "door.key")
-            {
-                ProtoBuf.Item.InstanceData keycode = new ProtoBuf.Item.InstanceData();
-                keycode.dataInt = code;
-                item.instanceData = keycode;
-            }
-            //Need to check other items, maybe notes ect
-            return item;
-        }
-
+ 
         private string CreatePacket(List<BaseNetworkable> Transfere, BaseEntity FerryPos, string dat = "")
         {
             if (FerryPos == null || Transfere == null) { return ""; }
@@ -2053,17 +2116,55 @@ namespace Oxide.Plugins
         //Sets Zlevel data
         private void SetZLevelsRemasteredData(string ownerid, string packet) { if (ZLevelsRemastered != null) { ZLevelsRemastered.Call<bool>("api_SetPlayerInfo", ulong.Parse(ownerid), packet); } }
 
+        private void GetData(Item item, ref string code,ref string imgdata,ref string oggdata)
+        {
+            if(item == null) { return; }
+            ProtoBuf.Item.InstanceData idat = item.instanceData;
+            if (idat != null)
+            {
+                //Add keys code data
+                if (idat.dataInt != 0) { code = idat.dataInt.ToString(); }
+                //Add image / sound data
+                if (item.instanceData.subEntity != 0)
+                {
+                    BaseNetworkable baseNetworkable = BaseNetworkable.serverEntities.Find(item.instanceData.subEntity);
+                    if (baseNetworkable != null)
+                    {
+                        PhotoEntity photoEntity;
+                        if ((photoEntity = (baseNetworkable as PhotoEntity)) != null)
+                        {
+                            imgdata = photoEntity.PhotographerSteamId.ToString() + "<IDATA>" + Convert.ToBase64String(FileStorage.server.Get(photoEntity.ImageCrc, FileStorage.Type.jpg, photoEntity.net.ID));
+                        }
+                        Cassette cassetteEntity;
+                        if ((cassetteEntity = (baseNetworkable as Cassette)) != null)
+                        {
+                            oggdata = cassetteEntity.CreatorSteamId.ToString() + "<SDATA>" + Convert.ToBase64String(FileStorage.server.Get(cassetteEntity.AudioId, FileStorage.Type.ogg, cassetteEntity.net.ID));
+                        }
+                    }
+                }
+            }
+        }
+
+
         private Dictionary<string, string> Contents(Item item, string Owner, string slot = "0", string container = "0")
         {
             //Item packet
             string code = "0";
             string mods = "";
-            //Add keys code data
-            if (item.info.shortname != null && (item.info.shortname == "car.key" || item.info.shortname == "door.key")) { code = (item.instanceData.dataInt.ToString()); }
+            string imgdata = "";
+            string oggdata = "";
+            GetData(item, ref code, ref imgdata, ref oggdata);
             //Create list of mods on weapon
             if (item.contents != null)
             {
-                foreach (var mod in item.contents.itemList){if (mod.info.itemid != 0) { mods += (mod.info.itemid.ToString() + "=" + mod.condition.ToString() + "=" + mod.amount.ToString() + "_"); }}
+                foreach (Item mod in item.contents.itemList)
+                {
+                    if (mod.info.itemid != 0)
+                    {
+                        GetData(mod, ref code, ref imgdata, ref oggdata);
+                        mods += (mod.info.itemid.ToString() + "<M>" + mod.condition.ToString() + "<M>" + mod.amount.ToString() + "<M>" + mod.text + "<ML>");
+                    }
+                }
             }
             var itemdata = new Dictionary<string, string>
                         {
@@ -2073,6 +2174,9 @@ namespace Oxide.Plugins
                         { "amount", item.amount.ToString() },
                         { "skinid", item.skin.ToString() },
                         { "code", code},
+                        { "text", item.text},
+                        { "imgdata", imgdata},
+                        { "oggdata", oggdata},
                         { "mods", mods},
                         { "container", container },
                         { "slot", slot }
@@ -2099,6 +2203,7 @@ namespace Oxide.Plugins
 
         private void modularCar(ModularCar car, BaseEntity FerryPos, ref Dictionary<string, List<Dictionary<string, string>>> data)
         {
+            if (car == null || FerryPos == null) return;
             string thiscarID = car.net.ID.ToString();
             List<Dictionary<string, string>> itemlist = new List<Dictionary<string, string>>();
             itemlist.Add(baseVechicle(car, FerryPos, car.TotalSockets.ToString(), car.carLock.LockID.ToString()));
@@ -2126,12 +2231,12 @@ namespace Oxide.Plugins
                 if (vehicleModuleCamper != null)
                 {
                     //create packet of camper module parts
-                    ItemContainer camperInventory = vehicleModuleCamper.GetContainer().inventory;
-                    if (camperInventory != null)
+                    itemlist = new List<Dictionary<string, string>>();
+                    //Store position of stoage container
+                    ItemContainer storage = vehicleModuleCamper.activeStorage.Get(true).inventory;
+                    if (storage != null)
                     {
-                        itemlist = new List<Dictionary<string, string>>();
-                        //Store position of stoage container
-                        foreach (Item item in vehicleModuleCamper.activeStorage.Get(true).inventory.itemList.ToArray())
+                        foreach (Item item in storage.itemList.ToList())
                         {
                             if (item != null)
                             {
@@ -2139,7 +2244,11 @@ namespace Oxide.Plugins
                                 item.Remove();
                             }
                         }
-                        foreach (Item item in vehicleModuleCamper.activeLocker.Get(true).inventory.itemList.ToArray())
+                    }
+                    ItemContainer locker = vehicleModuleCamper.activeLocker.Get(true).inventory;
+                    if (locker != null)
+                    {
+                        foreach (Item item in locker.itemList.ToList())
                         {
                             if (item != null)
                             {
@@ -2147,7 +2256,11 @@ namespace Oxide.Plugins
                                 item.Remove();
                             }
                         }
-                        foreach (Item item in vehicleModuleCamper.activeBbq.Get(true).inventory.itemList.ToArray())
+                    }
+                    ItemContainer bbq = vehicleModuleCamper.activeBbq.Get(true).inventory;
+                    if (bbq != null)
+                    {
+                        foreach (Item item in bbq.itemList.ToList())
                         {
                             if (item != null)
                             {
@@ -2155,10 +2268,10 @@ namespace Oxide.Plugins
                                 item.Remove();
                             }
                         }
-                        if (itemlist.Count != 0) { data.Add("ModularCarCamper[" + vehicleModuleCamper.net.ID.ToString() + "]", itemlist); }
-                        socket++;
-                        continue;
                     }
+                    if (itemlist.Count != 0) { data.Add("ModularCarCamper[" + vehicleModuleCamper.net.ID.ToString() + "]", itemlist); }
+                    socket++;
+                    continue;
                 }
             }
         }
@@ -2298,6 +2411,9 @@ namespace Oxide.Plugins
                 ulong skin = 0;
                 float condition = 0;
                 int code = 0;
+                string text = "";
+                string imgdata = "";
+                string oggdata = "";
                 List<string> mods = new List<string>();
                 foreach (string st in itmlist)
                 {
@@ -2323,13 +2439,22 @@ namespace Oxide.Plugins
                         case "code":
                             if (int.TryParse(info[1], out _int)) { code = _int; }
                             break;
+                        case "text":
+                            text = info[1];
+                            break;
+                        case "imgdata":
+                            imgdata = info[1];
+                            break;
+                        case "oggdata":
+                            oggdata = info[1];
+                            break;
                         case "mods":
-                            if (info[1] != "") { string[] wmod = info[1].Split(new string[] { "_" }, System.StringSplitOptions.RemoveEmptyEntries); foreach (string w in wmod) { mods.Add(w); } }
+                            if (info[1] != "") { string[] wmod = info[1].Split(new string[] { "<ML>" }, System.StringSplitOptions.RemoveEmptyEntries); foreach (string w in wmod) { mods.Add(w); } }
                             break;
                         case "slot":
                             if (int.TryParse(info[1], out _int))
                             {
-                                Item i = BuildItem(id, amount, skin, condition, code, mods.ToList());
+                                Item i = BuildItem(id, amount, skin, condition, code, imgdata, oggdata, text, mods.ToList());
                                 if (i == null) { continue; }
                                 if (!i.MoveToContainer(ice.inventory, _int, true, true))
                                 {
@@ -2582,6 +2707,7 @@ namespace Oxide.Plugins
             public float health = 0;
             public float maxhealth = 0;
             public int fuel = 0;
+            public int lockid = 0;
             public ulong ownerid = 0;
             public string modules = "";
             public string children = "";
@@ -2600,6 +2726,9 @@ namespace Oxide.Plugins
             public float condition = 0;
             public ulong skinid = 0;
             public int code = 0;
+            public string text = "";
+            public string imgdata = "";
+            public string oggdata = "";
             public float hydration = 0;
             public string team = "";
             public float calories = 0;
@@ -2647,6 +2776,9 @@ namespace Oxide.Plugins
                             case "fuel":
                                 if (int.TryParse(ii.Value, out _int)) { fuel = _int; }
                                 break;
+                            case "lockid":
+                                if (int.TryParse(ii.Value, out _int)) { lockid = _int; }
+                                break;
                             case "ownerid":
                                 if (ulong.TryParse(ii.Value, out _ulong)) { ownerid = _ulong; }
                                 break;
@@ -2667,9 +2799,9 @@ namespace Oxide.Plugins
                                         string[] wmod = new string[0];
                                         if (mod != "")
                                         {
-                                            wmod = ii.Value.Split('_');
+                                            wmod = mod.Split(new string[] { "<ML>" }, System.StringSplitOptions.RemoveEmptyEntries);
                                         }
-                                        Item item = plugin.BuildItem(id, amount, skinid, condition, code, wmod.ToList());
+                                        Item item = plugin.BuildItem(id, amount, skinid, condition, code, imgdata, oggdata, text, wmod.ToList());
                                         if (item != null)
                                         {
                                             if (!item.MoveToContainer(sc, slot, true, true))
@@ -2680,7 +2812,7 @@ namespace Oxide.Plugins
                                         }
                                         break;
                                     case 3: //Invontorys
-                                        plugin.GiveContents(ownerid.ToString(), id, condition, amount, skinid, code, slot, container, mod, CreatedEntitys);
+                                        plugin.GiveContents(ownerid.ToString(), id, condition, amount, skinid, code, imgdata, oggdata, text, slot, container, mod, CreatedEntitys);
                                         break;
                                 }
                                 break;
@@ -2692,6 +2824,15 @@ namespace Oxide.Plugins
                                 break;
                             case "code":
                                 if (int.TryParse(ii.Value, out _int)) { code = _int; }
+                                break;
+                            case "text":
+                                text = ii.Value;
+                                break;
+                            case "imgdata":
+                                imgdata = ii.Value;
+                                break;
+                            case "oggdata":
+                                oggdata = ii.Value;
                                 break;
                             case "modules":
                                 modules = ii.Value;
