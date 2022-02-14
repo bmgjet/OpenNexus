@@ -604,12 +604,9 @@ namespace Oxide.Plugins
             player.SetFlag(BaseEntity.Flags.Protected, false);
         }
 
-        private object CanHelicopterTarget(PatrolHelicopterAI heli, BasePlayer player)
-        {
-            BaseEntity Ferry = player.GetParentEntity();
-            if (Ferry != null && Ferry is NexusFerry){return true;}
-            return null;
-        }
+        private object CanHelicopterTarget(PatrolHelicopterAI heli, BasePlayer player){return FerryProtection(player);}
+        private object CanHelicopterStrafeTarget(PatrolHelicopterAI heli, BasePlayer player){return FerryProtection(player);}
+        object OnEntityTakeDamage(BaseCombatEntity entity, HitInfo info){return FerryProtection(entity);}
 
         private void Unload()
         {
@@ -778,6 +775,13 @@ namespace Oxide.Plugins
             foreach (var groundwatch in ent.GetComponentsInChildren<GroundWatch>().ToArray()) { UnityEngine.Object.DestroyImmediate(groundwatch); }
         }
 
+        private object FerryProtection(BaseEntity be)
+        {
+            BaseEntity Ferry = be.GetParentEntity();
+            if (Ferry != null && Ferry is OpenNexusFerry) { return false; }
+            return null;
+        }
+
         private void MessageScreen(string msg, Vector3 pos, float radius, int delay = 8)
         {
             if (config._StatusSettings.StatusMsg == false) { return; }
@@ -826,7 +830,12 @@ namespace Oxide.Plugins
             {
                 foreach (BaseVehicle seat in bv)
                 {
-                    seat.GetMountPoint(seatnum).mountable.AttemptMount(player, false);
+                    if(!seat.GetMountPoint(seatnum).mountable.HasValidDismountPosition(player))
+                    {
+                        player.Teleport(player.transform.position += new Vector3(0, 3, 0));
+                        return;
+                    }
+                    seat.GetMountPoint(seatnum).mountable.MountPlayer(player);
                     return;
                 }
             }
@@ -845,7 +854,13 @@ namespace Oxide.Plugins
             //Trys to mount seat
             if (closest_seat != null)
             {
-                closest_seat.GetComponent<BaseMountable>().AttemptMount(player);
+                BaseMountable seat = closest_seat.GetComponent<BaseMountable>();
+                if (seat == null || !seat.HasValidDismountPosition(player))
+                {
+                    player.Teleport(player.transform.position += new Vector3(0, 3, 0));
+                    return;
+                }
+                seat.MountPlayer(player);
                 closest_seat.SendNetworkUpdateImmediate();
                 player.SendNetworkUpdateImmediate();
             }
@@ -1461,7 +1476,7 @@ namespace Oxide.Plugins
                                     {
                                         if (ulong.TryParse(data[1], out _ulong)) { Bags[bagmodded].deployerUserID = _ulong; }
                                         Bags[bagmodded].niceName = data[0];
-                                        Bags[bagmodded].SendNetworkUpdate(BasePlayer.NetworkQueue.Update);
+                                        Bags[bagmodded].SendNetworkUpdateImmediate();
                                         bagmodded++;
                                     }
                                 }
@@ -1686,7 +1701,7 @@ namespace Oxide.Plugins
                 //Create new player for them to spawn into
                 player = GameManager.server.CreateEntity("assets/prefabs/player/player.prefab", FerryPos.transform.position, FerryPos.transform.rotation, true).ToPlayer();
                 player.lifestate = BaseCombatEntity.LifeState.Dead;
-                player.ResetLifeStateOnSpawn = true;
+                player.ResetLifeStateOnSpawn = false;
                 player.SetFlag(BaseEntity.Flags.Protected, true);
                 player.Spawn();
                 StartSleeping(player);
