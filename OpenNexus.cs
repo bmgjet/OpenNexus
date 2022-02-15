@@ -26,6 +26,7 @@ namespace Oxide.Plugins
         private string thisserverport = "";      //Over-ride auto detected port
         //Vehicle to apply edge protection too (no point doing cars ect since they will sink before they get there)
         private string[] BaseVehicle = { "rowboat", "rhib", "scraptransporthelicopter", "minicopter.entity", "submarinesolo.entity", "submarineduo.entity" };
+        private int CargoDistance = 800; //Distance cargoship has to be away for ferry to move
 
         //Permissions
         private readonly string permbypass = "OpenNexus.bypass"; //bypass the single server at a time limit
@@ -39,6 +40,7 @@ namespace Oxide.Plugins
         private List<ulong> MovePlayers = new List<ulong>();
         private List<BasePlayer> JoinedViaNexus = new List<BasePlayer>();
         private List<ModuleData> CarModules = new List<ModuleData>();
+        private List<CargoShip> ActiveCargoShips = new List<CargoShip>();
         public static OpenNexus plugin;
         private Climate climate;
         private uint RanMapSize;
@@ -568,7 +570,12 @@ namespace Oxide.Plugins
                     if (vehicle != null) if (vehicle.GetComponent<EdgeTeleport>() == null) { vehicle.gameObject.AddComponent<EdgeTeleport>(); return; }
                 }
             }
+            //Keep track of cargo ship so they dont collide
+            if(baseEntity is CargoShip){ActiveCargoShips.Add(baseEntity as CargoShip);}
         }
+        
+        //Remove cargoship from list when its leaving
+        private void OnCargoShipEgress(CargoShip cs){if (ActiveCargoShips.Contains(cs)) { ActiveCargoShips.Remove(cs); }}
 
         private void OnWorldPrefabSpawned(GameObject gameObject, string str)
         {
@@ -1188,7 +1195,12 @@ namespace Oxide.Plugins
         {
             //trys to move into container position other wise force inserts into position
             if (settings == null || Inventory == null) return;
-            Item item = CreateItem(settings.id, settings.amount, settings.skinid, settings.condition, settings.code, settings.imgdata, settings.oggdata, settings.text);
+            string[] wmod = new string[0];
+            if (settings.mod != "")
+            {
+                wmod = settings.mod.Split(new string[] { "<ML>" }, System.StringSplitOptions.RemoveEmptyEntries);
+            }
+            Item item = BuildItem(settings.id, settings.amount, settings.skinid, settings.condition, settings.code, settings.imgdata, settings.oggdata, settings.text, wmod.ToList());
             if (item != null)
             {
                 if (!item.MoveToContainer(Inventory, settings.slot, true, true))
@@ -1887,11 +1899,12 @@ namespace Oxide.Plugins
                 }
             }
             //Add keycode back to keys
-            if (item.info.shortname.Contains(".key"))
+            if (item.info.shortname.Contains("key"))
             {
-                ProtoBuf.Item.InstanceData instanceData = Facepunch.Pool.Get<ProtoBuf.Item.InstanceData>();
+                ProtoBuf.Item.InstanceData instanceData = new ProtoBuf.Item.InstanceData();
                 instanceData.dataInt = code;
                 item.instanceData = instanceData;
+                item.instanceData.ShouldPool = false;
             }
             item.condition = condition;
             if (text != "") { item.text = text; }       
@@ -2100,13 +2113,7 @@ namespace Oxide.Plugins
         }
 
         //Sets players server rewards balance
-        private void SetServerRewardsData(string Owner, string Balance)
-        {
-            if (ServerRewards != null && Owner != null && Balance != null)
-            {
-                ServerRewards?.Call<string>("AddPoints", Owner, int.Parse(Balance));
-            }
-        }
+        private void SetServerRewardsData(string Owner, string Balance){if (ServerRewards != null && Owner != null && Balance != null){ServerRewards?.Call<string>("AddPoints", Owner, int.Parse(Balance));}}
 
         //Reads players Economics balance
         private List<Dictionary<string, string>> GetEconomicsData(string Owner)
@@ -2138,7 +2145,7 @@ namespace Oxide.Plugins
             if (idat != null)
             {
                 //Add keys code data
-                if (idat.dataInt != 0) { code = idat.dataInt.ToString(); }
+                if (idat.dataInt != 0) { code = idat.dataInt.ToString();}
                 //Add image / sound data
                 if (item.instanceData.subEntity != 0)
                 {
@@ -2148,12 +2155,14 @@ namespace Oxide.Plugins
                         PhotoEntity photoEntity;
                         if ((photoEntity = (baseNetworkable as PhotoEntity)) != null)
                         {
-                            imgdata = photoEntity.PhotographerSteamId.ToString() + "<IDATA>" + Convert.ToBase64String(FileStorage.server.Get(photoEntity.ImageCrc, FileStorage.Type.jpg, photoEntity.net.ID));
+                            byte[] Image = FileStorage.server.Get(photoEntity.ImageCrc, FileStorage.Type.jpg, photoEntity.net.ID);
+                            if (Image != null){imgdata = photoEntity.PhotographerSteamId.ToString() + "<IDATA>" + Convert.ToBase64String(Image);}
                         }
                         Cassette cassetteEntity;
                         if ((cassetteEntity = (baseNetworkable as Cassette)) != null)
                         {
-                            oggdata = cassetteEntity.CreatorSteamId.ToString() + "<SDATA>" + Convert.ToBase64String(FileStorage.server.Get(cassetteEntity.AudioId, FileStorage.Type.ogg, cassetteEntity.net.ID));
+                            byte[] Sound = FileStorage.server.Get(cassetteEntity.AudioId, FileStorage.Type.ogg, cassetteEntity.net.ID);
+                            if (Sound != null){oggdata = cassetteEntity.CreatorSteamId.ToString() + "<SDATA>" + Convert.ToBase64String(Sound);}
                         }
                     }
                 }
@@ -3232,6 +3241,8 @@ namespace Oxide.Plugins
             {
                 try
                 {
+                    //Stop cargoship being ran into
+                    foreach(CargoShip cs in plugin.ActiveCargoShips.ToArray()){if (cs != null) { if (cs.Distance(this) <= plugin.CargoDistance) { return false; } }}
                     Transform targetTransform = GetTargetTransform(_state);
                     Vector3 position = targetTransform.position;
                     Quaternion rotation = targetTransform.rotation;
