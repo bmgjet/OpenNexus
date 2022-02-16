@@ -24,14 +24,12 @@ namespace Oxide.Plugins
     {
         private string thisserverip = "";        //Over-ride auto detected ip
         private string thisserverport = "";      //Over-ride auto detected port
-        //Vehicle to apply edge protection too (no point doing cars ect since they will sink before they get there)
-        private string[] BaseVehicle = { "rowboat", "rhib", "scraptransporthelicopter", "minicopter.entity", "submarinesolo.entity", "submarineduo.entity" };
-        private int CargoDistance = 800; //Distance cargoship has to be away for ferry to move
-
         //Permissions
         private readonly string permbypass = "OpenNexus.bypass"; //bypass the single server at a time limit
         private readonly string permadmin = "OpenNexus.admin";   //Allows to use admin commands
-
+        //MySQL
+        Core.MySql.Libraries.MySql sqlLibrary = Interface.Oxide.GetLibrary<Core.MySql.Libraries.MySql>();
+        Core.Database.Connection sqlConnection;
         //Memory
         public List<IslandData> FoundIslands = new List<IslandData>();
         private Dictionary<ulong, int> SeatPlayers = new Dictionary<ulong, int>();
@@ -44,7 +42,6 @@ namespace Oxide.Plugins
         public static OpenNexus plugin;
         private Climate climate;
         private uint RanMapSize;
-
         //Plugin Hooks
         [PluginReference]
         private Plugin Backpacks, Economics, ZLevelsRemastered, ServerRewards;
@@ -79,6 +76,8 @@ namespace Oxide.Plugins
                 public int SyncTimeWeaterEvery;
                 [JsonProperty("Protect edge of map from players driving off")]
                 public bool EdgeTeleporter;
+                [JsonProperty("What vehicle to add edge protection to")]
+                public List<string> BaseVehicleProtection;
                 [JsonProperty("Compress packets to save data (recommended since it 1/4 there size)")]
                 public bool UseCompression;
                 [JsonProperty("Print debug info to console")]
@@ -104,6 +103,8 @@ namespace Oxide.Plugins
                 public int ProgressDelay;
                 [JsonProperty("Extra time to wait between moving entitys and players")]
                 public int RedirectDelay;
+                [JsonProperty("Stop ferry moving if cargo is within (distance)")]
+                public int CargoDistance;
             }
 
             [JsonProperty("Status Settings:")]
@@ -112,6 +113,8 @@ namespace Oxide.Plugins
             {
                 [JsonProperty("Show status messages to players")]
                 public bool StatusMsg;
+                [JsonProperty("Max distance from ferry to send message to")]
+                public int MSGDistance;
                 [JsonProperty("Font size")]
                 public int FontSize;
                 [JsonProperty("Font coluor")]
@@ -168,6 +171,7 @@ namespace Oxide.Plugins
                         SyncTimeWeather = true,
                         SyncTimeWeaterEvery = 360,
                         EdgeTeleporter = true,
+                        BaseVehicleProtection = { "rowboat", "rhib", "scraptransporthelicopter", "minicopter.entity", "submarinesolo.entity", "submarineduo.entity"  },
                         UseCompression = true,
                         ShowDebugMsg = false
                     },
@@ -181,10 +185,12 @@ namespace Oxide.Plugins
                         TransfereSyncTime = 60,
                         ProgressDelay = 60,
                         RedirectDelay = 5,
+                        CargoDistance = 800,
                     },
                     _StatusSettings = new StatusSettings
                     {
                         StatusMsg = true,
+                        MSGDistance = 60,
                         FontSize = 32,
                         FontColour = "0.1 0.4 0.1 0.7",
                         FontFadeIn = 3,
@@ -235,11 +241,7 @@ namespace Oxide.Plugins
         [ChatCommand("OpenNexus.Paste")]
         private void cmdPaste(BasePlayer player, string command, string[] args)
         {
-            if (!HasPermission(player, permadmin))
-            {
-                player.ChatMessage("You dont have OpenNexus.admin Perm!");
-                return;
-            }
+            if (!HasPermission(player, permadmin)){player.ChatMessage("You dont have OpenNexus.admin Perm!");return;}
             if (args.Length != 1)
             {
                 player.ChatMessage("You must provide packet id!");
@@ -257,7 +259,6 @@ namespace Oxide.Plugins
         {
             //Resets database tables
             if (!arg.IsAdmin) { return; }
-
             string sqlQuery = "DROP TABLE IF EXISTS  players, packets, sync;";
             Sql deleteCommand = Oxide.Core.Database.Sql.Builder.Append(sqlQuery);
             sqlLibrary.ExecuteNonQuery(deleteCommand, sqlConnection);
@@ -274,11 +275,7 @@ namespace Oxide.Plugins
         [ChatCommand("OpenNexus.reloadconfig")]
         private void cmdreloadconfig(BasePlayer player, string command, string[] args)
         {
-            if (!HasPermission(player, permadmin))
-            {
-                player.ChatMessage("You dont have OpenNexus.admin Perm!");
-                return;
-            }
+            if (!HasPermission(player, permadmin)){player.ChatMessage("You dont have OpenNexus.admin Perm!");return;}
             Configuration oldconfig = config;
             config = Config.ReadObject<Configuration>();
             if (oldconfig != config)
@@ -292,11 +289,7 @@ namespace Oxide.Plugins
         [ChatCommand("OpenNexus.resetconfig")]
         private void cmdresetconfig(BasePlayer player, string command, string[] args)
         {
-            if (!HasPermission(player, permadmin))
-            {
-                player.ChatMessage("You dont have OpenNexus.admin Perm!");
-                return;
-            }
+            if (!HasPermission(player, permadmin)){player.ChatMessage("You dont have OpenNexus.admin Perm!");return;}
             LoadDefaultConfig();
             NextTick(SaveConfig);
             player.ChatMessage("Reset config to defaut. Not all settings will take effect with out a restart of plugin.");
@@ -320,31 +313,9 @@ namespace Oxide.Plugins
             }
             NextTick(SaveConfig);
         }
-
-        [ConsoleCommand("OpenNexus.compression")]
-        private void cmdComp(ConsoleSystem.Arg arg)
-        {
-            //Resets database tables
-            if (!arg.IsAdmin) { return; }
-            if (config._ServerSettings.ShowDebugMsg)
-            {
-                config._ServerSettings.UseCompression = false;
-                Puts("Compression Disabled.");
-            }
-            else
-            {
-                config._ServerSettings.UseCompression = true;
-                Puts("Compression Enabled.");
-            }
-            NextTick(SaveConfig);
-        }
         #endregion
 
         #region MySQL
-        //MySQL
-        Core.MySql.Libraries.MySql sqlLibrary = Interface.Oxide.GetLibrary<Core.MySql.Libraries.MySql>();
-        Core.Database.Connection sqlConnection;
-
         //Read data from mysql database
         private void MySQLRead(string Target, OpenNexusFerry OpenFerry, int findid = 0, BasePlayer player = null)
         {
@@ -368,7 +339,7 @@ namespace Oxide.Plugins
                 foreach (Dictionary<string, object> entry in list)
                 {
                     //Packet has already been spawned on server before so dont re-transfere
-                    if (entry["spawned"].ToString() == "1" && findid == 0) { continue; } 
+                    if (entry["spawned"].ToString() == "1" && findid == 0) { continue; }
                     //Process Packet
                     int id;
                     bool success = int.TryParse(entry["id"].ToString(), out id);
@@ -377,11 +348,7 @@ namespace Oxide.Plugins
                     if (config._ServerSettings.UseCompression) { data = Encoding.UTF8.GetString(Compression.Uncompress(Convert.FromBase64String(entry["data"].ToString()))); } //compressed
                     else { data = entry["data"].ToString(); }
                     //Admin command
-                    if (player != null)
-                    {
-                        ReadPacket(data, player, id);
-                        return;
-                    }
+                    if (player != null){ReadPacket(data, player, id);return;}
                     //Process mysql packet
                     ReadPacket(data, OpenFerry, id);
                     //Kill stray bots that might of followed players
@@ -395,7 +362,7 @@ namespace Oxide.Plugins
                     if (config._ServerSettings.ShowDebugMsg) plugin.Puts("Read " + String.Format("{0:0.##}", (double)(entry["data"].ToString().Length / 1024f)) + " Kb");
                     return;
                 }
-                    return;
+                return;
             });
         }
 
@@ -447,10 +414,7 @@ namespace Oxide.Plugins
                 //Update failed so do insert
                 sqlQuery = "INSERT INTO sync (`state`, `sender`, `target`, `climate`) VALUES (@0, @1, @2, @3);";
                 Sql insertCommand = Oxide.Core.Database.Sql.Builder.Append(sqlQuery, state, fromaddress, target, plugin.getclimate());
-                sqlLibrary.Insert(insertCommand, sqlConnection, rowsAffectedwrite =>
-                {
-                    if (rowsAffectedwrite > 0) { if (config._ServerSettings.ShowDebugMsg) { Puts("UpdateSync New Record inserted with ID: {0}", sqlConnection.LastInsertRowId); } }
-                });
+                sqlLibrary.Insert(insertCommand, sqlConnection, rowsAffectedwrite =>{if (rowsAffectedwrite > 0) { if (config._ServerSettings.ShowDebugMsg) { Puts("UpdateSync New Record inserted with ID: {0}", sqlConnection.LastInsertRowId); } }});
             });
         }
 
@@ -792,6 +756,14 @@ namespace Oxide.Plugins
         private void MessageScreen(string msg, Vector3 pos, float radius, int delay = 8)
         {
             if (config._StatusSettings.StatusMsg == false) { return; }
+            foreach(BasePlayer player in BasePlayer.activePlayerList)
+            {
+                if(player.Distance(pos) < config._StatusSettings.MSGDistance)
+                {
+                    if (!player.IsSleeping()) { DirectMessage(player, msg, delay); }
+                }
+
+            }
             List<BasePlayer> PlayersInRange = new List<BasePlayer>();
             //Scans area for players
             Vis.Entities<BasePlayer>(pos, radius, PlayersInRange);
@@ -1465,10 +1437,7 @@ namespace Oxide.Plugins
                         {
                             if (baseEntity2 == null) continue;
                             SleepingBag sleepingBagCamper;
-                            if ((sleepingBagCamper = (baseEntity2 as SleepingBag)) != null)
-                            {
-                                Bags.Add(sleepingBagCamper);
-                            }
+                            if ((sleepingBagCamper = (baseEntity2 as SleepingBag)) != null){Bags.Add(sleepingBagCamper);}
                         }
                     }
                     //Fix for bags owners and name
@@ -1498,7 +1467,6 @@ namespace Oxide.Plugins
                     //Relock car if it had a lock
                     if(settings.lockid != 0)
                     {
-                        Puts("Locking car " + settings.lockid.ToString());
                         car.carLock.LockID = settings.lockid;
                         car.carLock.owner.SendNetworkUpdate();
                     }
@@ -1690,8 +1658,6 @@ namespace Oxide.Plugins
                 ulong steamid;
                 bool success = ulong.TryParse(settings.steamid, out steamid);
                 if (!success) { return null; }
-
-
                 //Server Server for player already spawned;
                 BasePlayer player = BasePlayer.FindAwakeOrSleeping(settings.steamid);
                 if (player != null)
@@ -1845,7 +1811,7 @@ namespace Oxide.Plugins
                         if (int.TryParse(modsetting[0], out _int) && float.TryParse(modsetting[1], out _float) && int.TryParse(modsetting[2], out _int2))
                         {
                             Item moditem = CreateItem(_int, _int2, 0, _float, code, imgdata, oggdata, ttext, 0);
-                            if (moditem != null){if (!moditem.MoveToContainer(item.contents)) { item.contents.Insert(moditem); }}
+                            if (moditem != null && item.contents != null) {if (!moditem.MoveToContainer(item.contents)) { item.contents.Insert(moditem); }}
                         }
                     }
                 }
@@ -2479,7 +2445,7 @@ namespace Oxide.Plugins
                             if (int.TryParse(info[1], out _int))
                             {
                                 Item i = BuildItem(id, amount, skin, condition, code, imgdata, oggdata, text, mods.ToList());
-                                if (i == null) { continue; }
+                                if (i == null || ice.inventory == null) { continue; }
                                 if (!i.MoveToContainer(ice.inventory, _int, true, true))
                                 {
                                     i.position = _int;
@@ -3015,10 +2981,7 @@ namespace Oxide.Plugins
                 if (!IsDestroyed) { Kill(); }
             }
 
-            private void Die()
-            {
-                if (this != null && !IsDestroyed) { Destroy(this); }
-            }
+            private void Die(){if (this != null && !IsDestroyed) { Destroy(this); }}
 
             private void Update()
             {
@@ -3044,19 +3007,13 @@ namespace Oxide.Plugins
             {
                 switch (state)
                 {
-                    case OpenNexusFerry.State.Arrival:
-                        return Arrival;
-                    case OpenNexusFerry.State.Docking:
-                        return Docking;
+                    case OpenNexusFerry.State.Arrival:return Arrival;
+                    case OpenNexusFerry.State.Docking:return Docking;
                     case OpenNexusFerry.State.Stopping:
-                    case OpenNexusFerry.State.Waiting:
-                        return Docked;
-                    case OpenNexusFerry.State.CastingOff:
-                        return CastingOff;
-                    case OpenNexusFerry.State.Departure:
-                        return Departure;
-                    default:
-                        return base.transform;
+                    case OpenNexusFerry.State.Waiting:return Docked;
+                    case OpenNexusFerry.State.CastingOff:return CastingOff;
+                    case OpenNexusFerry.State.Departure:return Departure;
+                    default:return base.transform;
                 }
             }
 
@@ -3210,7 +3167,7 @@ namespace Oxide.Plugins
                     //Delay castoff after eject encase players want to get back on.
                     ServerSynced = false;
                     string CMSG = config._StatusSettings.CastoffMSG.Replace("<$T>", config._FerrySettings.EjectDelay.ToString());
-                    plugin.MessageScreen(CMSG, FerryPos.position, 60f);
+                    plugin.MessageScreen(CMSG, FerryPos.position, 100f);
                     Invoke(() => { ServerSynced = true; }, config._FerrySettings.EjectDelay);
                     plugin.UpdateSync(plugin.thisserverip + ":" + plugin.thisserverport, ServerIP + ":" + ServerPort, "CastingOff");
                     return;
@@ -3219,20 +3176,14 @@ namespace Oxide.Plugins
 
             private OpenNexusFerry.State GetPreviousState(OpenNexusFerry.State currentState)
             {
-                if (currentState != OpenNexusFerry.State.Invalid)
-                {
-                    return currentState - 1;
-                }
+                if (currentState != OpenNexusFerry.State.Invalid){return currentState - 1;}
                 return OpenNexusFerry.State.Invalid;
             }
 
             private OpenNexusFerry.State GetNextState(OpenNexusFerry.State currentState)
             {
                 OpenNexusFerry.State state = currentState + 1;
-                if (state >= OpenNexusFerry.State.Departure)
-                {
-                    state = OpenNexusFerry.State.Departure;
-                }
+                if (state >= OpenNexusFerry.State.Departure){state = OpenNexusFerry.State.Departure;}
                 return state;
             }
 
@@ -3242,7 +3193,7 @@ namespace Oxide.Plugins
                 try
                 {
                     //Stop cargoship being ran into
-                    foreach(CargoShip cs in plugin.ActiveCargoShips.ToArray()){if (cs != null) { if (cs.Distance(this) <= plugin.CargoDistance) { return false; } }}
+                    foreach(CargoShip cs in plugin.ActiveCargoShips.ToArray()){if (cs != null) { if (cs.Distance(this) <= config._FerrySettings.CargoDistance) { return false; } }}
                     Transform targetTransform = GetTargetTransform(_state);
                     Vector3 position = targetTransform.position;
                     Quaternion rotation = targetTransform.rotation;
@@ -3266,10 +3217,7 @@ namespace Oxide.Plugins
                         float num4 = Vector3Ex.Distance2D(position4, position);
                         rotation4 = Quaternion.Slerp(rotation, rotation3, num / num4);
                     }
-                    else
-                    {
-                        rotation4 = Quaternion.Slerp(rotation2, rotation, config._FerrySettings.TurnSpeed * Time.deltaTime);
-                    }
+                    else{rotation4 = Quaternion.Slerp(rotation2, rotation, config._FerrySettings.TurnSpeed * Time.deltaTime);}
                     base.transform.SetPositionAndRotation(position3, rotation4);
                     return num3 < num2;
                 }
@@ -3339,8 +3287,7 @@ namespace Oxide.Plugins
                         }
                     }
                     if (retrys < config._FerrySettings.TransfereTime - 1) { sendplayer(steamid, connection); }
-                }
-                , 1f);
+                }, 1f);
             }
 
             private void TransferOpenNexus()
@@ -3388,7 +3335,7 @@ namespace Oxide.Plugins
             {
                 //Check if its a allowed entity
                 string[] prefab = this.name.Split('/');
-                if (plugin.BaseVehicle.Contains(prefab[prefab.Length - 1].Replace(".prefab", ""))) { setup(); }
+                if (config._ServerSettings.BaseVehicleProtection.Contains(prefab[prefab.Length - 1].Replace(".prefab", ""))) { setup(); }
             }
 
             private void setup()
