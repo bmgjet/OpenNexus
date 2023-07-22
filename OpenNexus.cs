@@ -1,7 +1,6 @@
 //None of this code is to be used in any paid projects/plugins
 using Facepunch;
 using Facepunch.Utility;
-using Network;
 using Oxide.Core;
 using ProtoBuf;
 using Rust.Modular;
@@ -12,9 +11,9 @@ using UnityEngine;
 using Oxide.Core.Database;
 using Rust;
 using Oxide.Core.Plugins;
-using Newtonsoft.Json;
 using System.Linq;
 using Oxide.Game.Rust.Cui;
+
 
 namespace Oxide.Plugins
 {
@@ -161,7 +160,7 @@ namespace Oxide.Plugins
         private void cmdReset(ConsoleSystem.Arg arg)
         {
             //Resets database tables
-            if (!arg.IsAdmin) { return; }
+            if (!arg.IsAdmin) { Puts("You dont have OpenNexus.admin Perm!"); return; }
             string sqlQuery = "DROP TABLE IF EXISTS  players, packets, sync;";
             Sql deleteCommand = Oxide.Core.Database.Sql.Builder.Append(sqlQuery);
             sqlLibrary.ExecuteNonQuery(deleteCommand, sqlConnection);
@@ -178,7 +177,7 @@ namespace Oxide.Plugins
         [ConsoleCommand("OpenNexus.reloadconfig")]
         private void cmdReload(ConsoleSystem.Arg arg)
         {
-            //if (!arg.IsAdmin) {Puts("You dont have OpenNexus.admin Perm!"); return; }
+            if (!arg.IsAdmin) {Puts("You dont have OpenNexus.admin Perm!"); return; }
             ServerSettings oldconfig = _ServerSettings;
             _ServerSettings = Config.ReadObject<ServerSettings>();
             if (oldconfig != _ServerSettings)
@@ -332,7 +331,7 @@ namespace Oxide.Plugins
                         if (BasePlayer.FindByID(connection.ownerid).IPlayer.HasPermission(permbypass)) { return; }
                         string[] server = entry["target"].ToString().Split(':');
                         if (_ServerSettings.ShowDebugMsg) Puts("ReadPlayers Redirecting  " + steamid);
-                        ConsoleNetwork.SendClientCommand(connection, "nexus.redirect", new object[] { server[0], server[1] });
+                        ConsoleNetwork.SendClientCommand(connection, "nexus.redirect", new object[] { server[0], server[1], "" });
                         return;
                     }
                     //Waits for player moving
@@ -562,25 +561,22 @@ namespace Oxide.Plugins
             //Scan map prefabs
             foreach (PrefabData prefabdata in World.Serialization.world.prefabs)
             {
-                //Find Nexus dock
-                if (prefabdata.id == 1548681896)
+                //Find Nexus ferry
+                if (prefabdata.id == 2508295857)
                 {
                     //Read settings from prefab name
                     string[] FerrySettings = prefabdata.category.Replace(@"\", "").Split(',');
-                    if (FerrySettings == null || FerrySettings.Length < 2) { Debug.LogError("OpenNexus Dock not setup properly"); continue; }
+                    if (FerrySettings == null || FerrySettings.Length < 3) { Debug.LogError("OpenNexus ferry not setup properly"); continue; }
                     //Create rotation/position data
                     Quaternion rotation = Quaternion.Euler(new Vector3(prefabdata.rotation.x, prefabdata.rotation.y, prefabdata.rotation.z));
                     Vector3 position = new Vector3(prefabdata.position.x, prefabdata.position.y, prefabdata.position.z);
-                    //Adjust docked position for ferry
-                    position += (rotation * Vector3.forward) * 30.5f;
-                    position += (rotation * Vector3.right) * -10f;
-                    position += (rotation * Vector3.up) * 0.5f;
                     //Create New Ferry
                     NexusFerry ferry = (NexusFerry)GameManager.server.CreateEntity(StringPool.Get(2508295857), position, rotation) as NexusFerry;
                     if (ferry == null) continue;
                     //Attach open nexus code
                     OpenNexusFerry OpenFerry = ferry.gameObject.AddComponent<OpenNexusFerry>();
                     if (OpenFerry == null) continue;
+                    unloadable.Add(OpenFerry);
                     //Setup with setting in dock prefab name
                     SetFerryIPs(OpenFerry, FerrySettings);
                     //Finish creating OpenNexus Ferrys
@@ -590,7 +586,6 @@ namespace Oxide.Plugins
                     UnityEngine.Object.DestroyImmediate(ferry);
                     OpenFerry.enableSaving = false;
                     OpenFerry.Spawn();
-                    unloadable.Add(OpenFerry);
                 }
                 //Find NexusIslands
                 if (prefabdata.id == 2795004596)
@@ -601,6 +596,7 @@ namespace Oxide.Plugins
                     NexusIsland island = GameManager.server.CreateEntity(StringPool.Get(2795004596), position, rotation) as NexusIsland;
                     if (island == null) continue;
                     OpenNexusIsland openNexusIsland = island.gameObject.AddComponent<OpenNexusIsland>();
+                    unloadable.Add(openNexusIsland);
                     openNexusIsland.prefabID = island.prefabID;
                     openNexusIsland.syncPosition = true;
                     openNexusIsland.globalBroadcast = true;
@@ -613,7 +609,6 @@ namespace Oxide.Plugins
                     id.rotation = rotation;
                     FoundIslands.Add(id);
                     Puts("Found Island @ " + position.ToString());
-                    unloadable.Add(openNexusIsland);
                 }
             }
             //Remove dead Ferry turrets at junk collection (happens on reboots might shoot though low ground maps)
@@ -626,7 +621,6 @@ namespace Oxide.Plugins
         #endregion
 
         #region functions
-        private void AdjustConnectionScreen(BasePlayer player, string msg, int wait) { ServerMgr.Instance.connectionQueue.nextMessageTime = 1; if (Net.sv.write.Start()) { Net.sv.write.PacketID(Message.Type.Message); Net.sv.write.String(msg); Net.sv.write.String("Please wait " + wait + " seconds"); Net.sv.write.Send(new SendInfo(player.Connection)); } }
         private Vector3 StringToVector3(string sVector) { if (sVector.StartsWith("(") && sVector.EndsWith(")")) { sVector = sVector.Substring(1, sVector.Length - 2); } string[] sArray = sVector.Split(','); Vector3 result = new Vector3(float.Parse(sArray[0]), float.Parse(sArray[1]), float.Parse(sArray[2])); return result; }
         private Quaternion StringToQuaternion(string sVector) { if (sVector.StartsWith("(") && sVector.EndsWith(")")) { sVector = sVector.Substring(1, sVector.Length - 2); } string[] sArray = sVector.Split(','); Quaternion result = new Quaternion(float.Parse(sArray[0]), float.Parse(sArray[1]), float.Parse(sArray[2]), float.Parse(sArray[3])); return result; }
         private void StartSleeping(BasePlayer player) { if (!player.IsSleeping()) { Interface.CallHook("OnPlayerSleep", player); player.SetPlayerFlag(BasePlayer.PlayerFlags.Sleeping, true); player.sleepStartTime = Time.time; BasePlayer.sleepingPlayerList.Add(player); player.CancelInvoke("InventoryUpdate"); player.CancelInvoke("TeamUpdate"); player.SendNetworkUpdateImmediate(); } }
@@ -1250,12 +1244,11 @@ namespace Oxide.Plugins
             BaseSettings settings = new BaseSettings();
             settings.ProcessPacket(packets);
             //Create crane
-            BaseCrane crane = GameManager.server.CreateEntity(settings.prefab) as BaseCrane;
+            MagnetCrane crane = GameManager.server.CreateEntity(settings.prefab) as MagnetCrane;
             if (crane == null) return null;
             //spawn and setit up
             crane.Spawn();
             AttachFamily(crane, settings.children);
-            if (settings.unlimitedfuel) { crane.fuelPerSec = 0; }
             ApplySettings(crane, parent, settings.health, settings.maxhealth, settings.fuel, settings.ownerid, settings.pos, settings.rot);
             return new Dictionary<string, BaseNetworkable>() { { settings.netid, crane } };
         }
@@ -1360,8 +1353,8 @@ namespace Oxide.Plugins
                     //Relock car if it had a lock
                     if (settings.lockid != 0)
                     {
-                        car.carLock.LockID = settings.lockid;
-                        car.carLock.owner.SendNetworkUpdate();
+                        car.CarLock.Code = settings.lockid.ToString();
+                        car.CarLock.owner.SendNetworkUpdate();
                     }
                 }
             });
@@ -1563,9 +1556,7 @@ namespace Oxide.Plugins
                     if (player.IsConnected)
                     {
                         //Some how player is already on server so resync them to ferrys data.
-                        plugin.AdjustConnectionScreen(player, "Open Nexus Resyncing Server", 0);
-                        player.ClientRPCPlayer(null, player, "StartLoading");
-                        ConsoleNetwork.SendClientCommand(player.net.connection, "nexus.redirect", new object[] { thisserverip, thisserverport });
+                        ConsoleNetwork.SendClientCommand(player.net.connection, "nexus.redirect", new object[] { thisserverip, thisserverport,"" });
                     }
                     player.Kill();
                 }
@@ -1833,7 +1824,6 @@ namespace Oxide.Plugins
                     if (FerryPos is BasePlayer) { }//Is admin command so dont do transfere screen.
                     else
                     {
-                        plugin.AdjustConnectionScreen(baseplayer, "Open Nexus Transfering Data", 10);
                         baseplayer.ClientRPCPlayer(null, baseplayer, "StartLoading");
                         baseplayer.SetPlayerFlag(BasePlayer.PlayerFlags.ReceivingSnapshot, false);
                     }
@@ -1887,7 +1877,7 @@ namespace Oxide.Plugins
                     continue;
                 }
                 //create magnet crane packet
-                BaseCrane crane = entity as BaseCrane;
+                MagnetCrane crane = entity as MagnetCrane;
                 if (crane != null)
                 {
                     itemlist = new List<Dictionary<string, string>>();
@@ -2006,7 +1996,7 @@ namespace Oxide.Plugins
                 //Add keys code data
                 if (idat.dataInt != 0) { code = idat.dataInt.ToString(); }
                 //Add image / sound data
-                if (item.instanceData.subEntity != 0)
+                if (item.instanceData.subEntity.Value != 0)
                 {
                     BaseNetworkable baseNetworkable = BaseNetworkable.serverEntities.Find(item.instanceData.subEntity);
                     if (baseNetworkable != null)
@@ -2089,7 +2079,7 @@ namespace Oxide.Plugins
             if (car == null || FerryPos == null) return;
             string thiscarID = car.net.ID.ToString();
             List<Dictionary<string, string>> itemlist = new List<Dictionary<string, string>>();
-            itemlist.Add(baseVechicle(car, FerryPos, car.TotalSockets.ToString(), car.carLock.LockID.ToString()));
+            itemlist.Add(baseVechicle(car, FerryPos, car.TotalSockets.ToString(), car.CarLock.Code.ToString()));
             data.Add("ModularCar[" + thiscarID + "]", itemlist);
             int socket = 0;
             foreach (BaseVehicleModule moduleEntity in car.AttachedModuleEntities)
@@ -2174,8 +2164,7 @@ namespace Oxide.Plugins
             if (mc != null && mc.fuelPerSec == 0) { unlimitedfuel = "True"; }
             MotorRowboat boat = bv as MotorRowboat;
             if (boat != null && boat.fuelPerSec == 0) { unlimitedfuel = "True"; }
-            BaseCrane crane = bv as BaseCrane;
-            if (crane != null && crane.fuelPerSec == 0) { unlimitedfuel = "True"; }
+            MagnetCrane crane = bv as MagnetCrane;
             BaseSubmarine sub = bv as BaseSubmarine;
             if (sub != null && sub.maxFuelPerSec == 0) { unlimitedfuel = "True"; }
             Snowmobile sm = bv as Snowmobile;
@@ -2356,7 +2345,7 @@ namespace Oxide.Plugins
             if (!_ServerSettings.Parented) { return; }
             //Rebuild all child entitys
             if (stringdata == null || stringdata == "") { return; }
-            Dictionary<uint, uint> RemapNetID = new Dictionary<uint, uint>();
+            Dictionary<ulong, ulong> RemapNetID = new Dictionary<ulong, ulong>();
             //Re add mount points
             string[] children = stringdata.Split(new string[] { "<mount>" }, System.StringSplitOptions.RemoveEmptyEntries);
             if (children.Length > 1)
@@ -2419,7 +2408,7 @@ namespace Oxide.Plugins
                 if (cd[0].Contains("<Parent>"))
                 {
                     //Update remap for netid change
-                    RemapNetID.Add(uint.Parse(cd[0].Replace("<Parent>", "")), parent.net.ID);
+                    RemapNetID.Add(uint.Parse(cd[0].Replace("<Parent>", "")), parent.net.ID.Value);
                     parent.skinID = ulong.Parse(cd[5]);
                     SetFlags(parent, cd[8]);
                     continue;
@@ -2443,8 +2432,8 @@ namespace Oxide.Plugins
                 if (cd[11] == "DestroyOnGroundMissing") { DestroyGroundComp(e); }
                 if (cd[12] == "DestroyMeshCollider") { DestroyMeshCollider(e); }
                 e.Spawn();
-                if (!RemapNetID.ContainsKey(oldnetid)) { RemapNetID.Add(oldnetid, e.net.ID); }
-                BaseNetworkable p = BaseNetworkable.serverEntities.Find(RemapNetID[uint.Parse(cd[15])]);
+                if (!RemapNetID.ContainsKey(oldnetid)) { RemapNetID.Add(oldnetid, e.net.ID.Value); }
+                BaseNetworkable p = BaseNetworkable.serverEntities.Find(new NetworkableId(RemapNetID[ulong.Parse(cd[15])]));
                 e.SetParent(p as BaseEntity);
                 e.transform.localPosition = pos;
                 e.transform.localRotation = rot;
@@ -2851,14 +2840,15 @@ namespace Oxide.Plugins
                         Departure.position = closest;
                     }
                     Departure.position = closest;
-                    Arrival.position = Docked.position + (FerryPos.rotation * Vector3.forward) * 124.2f;
-                    Arrival.position = Arrival.position + (FerryPos.rotation * Vector3.right) * 73.8f;
-                    Docking.position = Docked.position + (FerryPos.rotation * Vector3.forward) * 49f;
-                    Docking.position = Docking.position + (FerryPos.rotation * Vector3.right) * 48.8f;
-                    CastingOff.position = Docked.position + (FerryPos.rotation * Vector3.forward) * 24f;
-                    CastingOff.position = CastingOff.position + (FerryPos.rotation * Vector3.right) * 3.8f;
-                    EjectionZone.position = Docked.position + (FerryPos.rotation * Vector3.forward) * -36.4f;
-                    EjectionZone.position = EjectionZone.position + (FerryPos.rotation * Vector3.right) * -2f;
+                    Arrival.position = Docked.position + (FerryPos.rotation * Vector3.forward) * 200f;
+                    Arrival.position = Arrival.position + (FerryPos.rotation * Vector3.right) * -16f;
+                    Docking.position = Docked.position + (FerryPos.rotation * Vector3.forward) * 59f;
+                    Docking.position = Docking.position + (FerryPos.rotation * Vector3.right) * -12f;
+                    CastingOff.position = Docked.position + (FerryPos.rotation * Vector3.forward) * 34f;
+                    CastingOff.position = CastingOff.position + (FerryPos.rotation * Vector3.right) * -8f;
+                    EjectionZone.position = Docked.position + (FerryPos.rotation * Vector3.forward) * -75.4f;
+                    EjectionZone.position = EjectionZone.position + (FerryPos.rotation * Vector3.up) * 7f;
+                    EjectionZone.position = EjectionZone.position + (FerryPos.rotation * Vector3.right) * -44f;
                     Arrival.rotation = Docked.rotation;
                     CastingOff.rotation = Docked.rotation;
                     //Set this server in sync state
@@ -3166,14 +3156,10 @@ namespace Oxide.Plugins
                         BasePlayer bp = BasePlayer.FindAwakeOrSleeping(steamid.ToString());
                         if (bp != null && bp.IsConnected)
                         {
-                            plugin.AdjustConnectionScreen(bp, "Open Nexus Switching Server", _ServerSettings.RedirectDelay);
-                            bp.ClientRPCPlayer(null, bp, "StartLoading");
-                            bp.SetPlayerFlag(BasePlayer.PlayerFlags.ReceivingSnapshot, false);
-                            plugin.AdjustConnectionScreen(bp, "Open Nexus Switching Server", _ServerSettings.RedirectDelay);
                             Invoke(() =>
                             {
-                                ConsoleNetwork.SendClientCommand(bp.net.connection, "nexus.redirect", new object[] { ServerIP, ServerPort });
-                                bp.ToPlayer().Kick("OpenNexus Moving Server");
+                                ConsoleNetwork.SendClientCommand(bp.net.connection, "nexus.redirect", new object[] { ServerIP, ServerPort,"" });
+                                //bp.ToPlayer().Kick("OpenNexus Moving Server");
                                 bp.Kill();
                             }, _ServerSettings.RedirectDelay);
                             return;
