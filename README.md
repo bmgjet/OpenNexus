@@ -12,9 +12,10 @@ Server - DateTime, Weather, Lock player to 1 server at time</p>
 
 <p><strong>Database setup: </strong><br />
 Create a database, Create a username/password to use with it.<br />
-Enter these settings into the plugin. It will create the tables on its own.<br />
+Enter these settings into the config file and restart plugin. It will create the tables on its own. And the error messages should stop.<br />
 You have to use standard type password since thats all the Oxide.Mysql supports.<br />
 <br />
+  
 <strong>Plugin setup:</strong><br />
 Default settings should work best but theres other adjustments provided within the config file.</p>
 
@@ -41,6 +42,8 @@ Enter what ever you want in the name as long as its different from any other Doc
 Make sure you tick &quot;Convert Selection To Group&quot;<br />
 <br />
 Make sure you have the ferry height (y) as 0. And then line up the OpenNexusDock with the ferry to get the height right.<br />
+Video of setting up in rustedit: https://youtu.be/87J-te6S6cg
+  <br />
 <br />
 If you want to add a Nexus Island in the distance you can.<br />
 For this to work you need to have it with in the radius of the map.<br />
